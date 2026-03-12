@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kassensystem - POS</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <!-- LOGIN BEREICH -->
+    <div id="login-container">
+        <div class="login-box">
+            <h1>Kassen-Login</h1>
+            <input type="email" id="login-email" placeholder="E-Mail">
+            <input type="password" id="login-password" placeholder="Passwort">
+            <button id="btn-login">Anmelden</button>
+            <div id="login-error"></div>
+        </div>
+    </div>
+
+    <!-- HAUPT-APP (KASSE) -->
+    <div id="app-container" style="display: none;">
+        <header>
+            <nav id="main-nav">
+                <button class="nav-btn active" onclick="window.location.href='Index.html'">Kasse</button>
+                <button id="nav-dashboard" class="nav-btn" style="display: none;" onclick="window.location.href='dashboard.html'">📊 Dashboard</button>
+            </nav>
+            <div class="user-info">
+                <span id="user-display"></span>
+                <span id="user-role" class="role-badge"></span>
+                <button id="btn-logout">Abmelden</button>
+            </div>
+        </header>
+        
+        <div id="view-kasse" class="view">
+            <div class="container">
+                <div id="products">
+                    <h2>Produkte</h2>
+                    <div id="essen-kategorie">
+                        <h3>Essen</h3>
+                        <div id="essen-produkte" class="produkt-liste"></div>
+                    </div>
+                    <div id="trinken-kategorie">
+                        <h3>Trinken</h3>
+                        <div id="trinken-subkategorien" class="subkategorie-grid">
+                            <div class="subkategorie-block">
+                                <h4>Shots</h4>
+                                <div id="trinken-shots" class="produkt-liste"></div>
+                            </div>
+                            <div class="subkategorie-block">
+                                <h4>Cocktails</h4>
+                                <div id="trinken-cocktails" class="produkt-liste"></div>
+                            </div>
+                            <div class="subkategorie-block">
+                                <h4>HartAlk</h4>
+                                <div id="trinken-hartalk" class="produkt-liste"></div>
+                            </div>
+                            <div class="subkategorie-block">
+                                <h4>NonAlk</h4>
+                                <div id="trinken-nonalk" class="produkt-liste"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="privat-kategorie">
+                        <h3>Privat</h3>
+                        <div id="privat-produkte" class="produkt-liste"></div>
+                    </div>
+                </div>
+                <div id="cart">
+                    <h2>Warenkorb</h2>
+                    <ul id="cart-items"></ul>
+                    
+                    <div id="tip-section">
+                        <h3>Trinkgeld</h3>
+                        <div class="tip-control-wrapper">
+                            <div class="tip-toggle">
+                                <button id="btn-tip-total" class="active">Gesamt</button>
+                                <button id="btn-tip-amount">Extra</button>
+                            </div>
+                        </div>
+                        <div class="tip-input-wrapper">
+                            <div class="input-with-symbol">
+                                <input type="number" id="tip-input" placeholder="Betrag" step="10">
+                            </div>
+                            <div id="tip-display-info">Tip: 0.00 $</div>
+                        </div>
+                    </div>
+
+                    <div id="voucher-section">
+                        <h3>Gutschein</h3>
+                        <div class="voucher-input-wrapper">
+                            <input type="text" id="voucher-code" placeholder="Gutscheincode">
+                            <button id="btn-apply-voucher">OK</button>
+                        </div>
+                        <div id="voucher-status"></div>
+                    </div>
+
+                    <p class="final-total">Gesamt: <span id="total">0.00</span> $</p>
+                    <button id="btn-checkout">Kassieren & Abschließen</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="script.js" type="module"></script>
+</body>
+</html>

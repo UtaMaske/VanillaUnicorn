@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inhaber Dashboard - Auswertung</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <header>
+        <nav id="main-nav">
+            <button onclick="window.location.href='Index.html'" class="nav-btn">Kasse</button>
+            <button onclick="window.location.href='dashboard.html'" class="nav-btn active">📊 Dashboard</button>
+        </nav>
+        <div class="user-info">
+            <span id="user-display">Lade...</span>
+            <span id="user-role" class="role-badge"></span>
+            <button id="btn-logout">Abmelden</button>
+        </div>
+    </header>
+
+    <div class="dashboard-container">
+        <h1>Inhaber Dashboard</h1>
+        
+        <div class="filter-section" style="margin-bottom: 20px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 10px;">
+            <label for="stats-date" style="font-weight: bold;">Datum:</label>
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <button id="btn-prev-day" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; background: #f8f9fa; cursor: pointer;">◀</button>
+                <input type="text" id="stats-date" readonly style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; width: 110px; text-align: center; background: #fff; cursor: default;">
+                <button id="btn-next-day" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; background: #f8f9fa; cursor: pointer;">▶</button>
+                <button id="btn-all-days" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; background: #f8f9fa; cursor: pointer; margin-left: 10px; font-weight: bold;">Alle</button>
+            </div>
+        </div>
+
+        <div class="stats-overview">
+            <div class="stat-card">
+                <h3>Umsatz Heute</h3>
+                <p id="total-sales-all">0.00 $</p>
+            </div>
+            <div class="stat-card">
+                <h3>Trinkgeld Heute</h3>
+                <p id="total-tips-all">0.00 $</p>
+            </div>
+        </div>
+
+        <div class="tab-navigation">
+            <button class="tab-btn active" data-tab="tab-mitarbeiter">Mitarbeiter</button>
+            <button class="tab-btn" data-tab="tab-transaktionen">Einzeltransaktionen</button>
+            <button class="tab-btn" data-tab="tab-statistik">Stündliche Statistik</button>
+            <button class="tab-btn" data-tab="tab-vouchers">Gutscheine</button>
+            <button class="tab-btn" data-tab="tab-produkte">Produkte</button>
+        </div>
+
+        <div id="tab-produkte" class="tab-content">
+            <h2>Produkte verwalten</h2>
+            <div class="voucher-creator-card">
+                <div class="card-header">
+                    <h3>📦 Neues Produkt hinzufügen</h3>
+                </div>
+                <div class="voucher-form-grid">
+                    <div class="form-group">
+                        <label for="p-name">Name</label>
+                        <input type="text" id="p-name" placeholder="Z.B. Pizza Salami">
+                    </div>
+                    <div class="form-group">
+                        <label for="p-price">Preis ($)</label>
+                        <input type="number" id="p-price" step="0.10" placeholder="0.00">
+                    </div>
+                    <div class="form-group">
+                        <label for="p-category">Kategorie</label>
+                        <select id="p-category">
+                            <option value="Essen">Essen</option>
+                            <option value="Trinken">Trinken</option>
+                            <option value="Privat">Privat</option>
+                        </select>
+                    </div>
+                    <div id="p-subcat-group" class="form-group" style="display: none;">
+                        <label for="p-subcategory">Unterkategorie</label>
+                        <select id="p-subcategory">
+                            <option value="NonAlk">NonAlk</option>
+                            <option value="Shots">Shots</option>
+                            <option value="Cocktails">Cocktails</option>
+                            <option value="HartAlk">HartAlk</option>
+                        </select>
+                    </div>
+                    <div class="form-group btn-align-bottom">
+                        <button id="btn-create-product" class="save-voucher-btn">
+                            <span class="icon">💾</span> Speichern
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-wrapper">
+                <table id="products-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Kategorie</th>
+                            <th>Unterkategorie</th>
+                            <th>Preis ($)</th>
+                            <th>Aktion</th>
+                        </tr>
+                    </thead>
+                    <tbody id="products-body">
+                        <!-- Wird per JS gefüllt -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-vouchers" class="tab-content">
+            <h2>Gutscheine verwalten</h2>
+            
+            <div class="voucher-creator-card">
+                <div class="card-header">
+                    <h3>🎟️ Neuen Gutschein erstellen</h3>
+                    <p>Erstelle Rabatt-Codes für deine Kunden</p>
+                </div>
+                
+                <div class="voucher-form-grid">
+                    <div class="form-group">
+                        <label for="v-code">Gutschein-Code</label>
+                        <input type="text" id="v-code" placeholder="Z.B. SOMMER2026">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="v-discount">Rabatt-Wert & Typ</label>
+                        <div class="input-combo">
+                            <input type="number" id="v-discount" placeholder="Wert">
+                            <select id="v-discount-type">
+                                <option value="percent">%</option>
+                                <option value="absolute">$</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="v-type">Gültigkeit</label>
+                        <select id="v-type">
+                            <option value="multi">🔄 Mehrfach nutzbar</option>
+                            <option value="single">🎫 Einmalig nutzbar</option>
+                        </select>
+                    </div>
+                    
+                    <div class="form-group btn-align-bottom">
+                        <label for="v-code">Gutschein-Code</label>
+                        <button id="btn-create-voucher" class="save-voucher-btn">
+                            <span class="icon">💾</span> Speichern
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="table-wrapper">
+                <table id="vouchers-table">
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Rabatt</th>
+                            <th>Typ</th>
+                            <th>Nutzung</th>
+                            <th>Aktion</th>
+                        </tr>
+                    </thead>
+                    <tbody id="vouchers-body">
+                        <!-- Wird per JS gefüllt -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-mitarbeiter" class="tab-content active">
+            <h2>Mitarbeiter Auswertung</h2>
+            <div class="table-wrapper">
+                <table id="employee-stats-table">
+                    <thead>
+                        <tr>
+                            <th>Mitarbeiter</th>
+                            <th>Position</th>
+                            <th>Umsatz ($)</th>
+                            <th>Trinkgeld ($)</th>
+                            <th>Transaktionen</th>
+                        </tr>
+                    </thead>
+                    <tbody id="employee-stats-body">
+                        <!-- Wird per JS gefüllt -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-transaktionen" class="tab-content">
+            <h2>Einzelne Transaktionen</h2>
+            <div class="table-wrapper">
+                <table id="all-transactions-table">
+                    <thead>
+                        <tr>
+                            <th>Zeitpunkt</th>
+                            <th>Mitarbeiter</th>
+                            <th>Umsatz ($)</th>
+                            <th>Trinkgeld ($)</th>
+                            <th>Gesamt ($)</th>
+                            <th>Gutschein</th>
+                            <th>Aktion</th>
+                            </tr>
+                            </thead>                    <tbody id="all-transactions-body">
+                        <!-- Wird per JS gefüllt -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-statistik" class="tab-content">
+            <h2>Umsatz nach Uhrzeit</h2>
+            <div class="chart-container" style="position: relative; height:40vh; width:100%; margin-bottom: 20px; background: white; padding: 15px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                <canvas id="hourly-sales-chart"></canvas>
+            </div>
+            <div class="table-wrapper">
+                <table id="hourly-stats-table">
+                    <thead>
+                        <tr>
+                            <th>Uhrzeit</th>
+                            <th>Umsatz ($)</th>
+                            <th>Trinkgeld ($)</th>
+                            <th>Anzahl Transaktionen</th>
+                        </tr>
+                    </thead>
+                    <tbody id="hourly-stats-body">
+                        <!-- Wird per JS gefüllt -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="dashboard.js" type="module"></script>
+</body>
+</html>
