@@ -10,7 +10,8 @@ let total = 0;
 let tipAmount = 0;
 let tipMode = 'total'; 
 let appliedVoucher = null;
-let currentUserProfile = null; // Hinzugefügt, um den Fehler zu beheben
+let currentUserProfile = null; 
+let paymentMethod = 'Bar'; // Standardmäßig Barzahlung
 
 // DOM Elemente
 const loginContainer = document.getElementById('login-container');
@@ -40,6 +41,8 @@ const voucherCodeInput = document.getElementById('voucher-code');
 const btnApplyVoucher = document.getElementById('btn-apply-voucher');
 const voucherStatusDiv = document.getElementById('voucher-status');
 const btnCheckout = document.getElementById('btn-checkout');
+const btnPayCash = document.getElementById('btn-pay-cash');
+const btnPayCard = document.getElementById('btn-pay-card');
 
 // --- LOGIN LOGIK ---
 async function handleLogin() {
@@ -265,7 +268,8 @@ async function checkout() {
         subtotal: finalSub,
         tip_amount: tipAmount,
         total_amount: finalSub + tipAmount,
-        voucher_code: appliedVoucher?.code || null
+        voucher_code: appliedVoucher?.code || null,
+        payment_method: paymentMethod
     };
 
     console.log('Sende Transaktionsdaten an Supabase:', transactionData);
@@ -277,13 +281,44 @@ async function checkout() {
         alert(`Fehler beim Speichern: ${error.message}`); 
         return; 
     }
+
+    // --- NEU: Verkaufszahlen in products_sales aktualisieren ---
+    for (const item of cart) {
+        // Zuerst aktuellen Zählerstand abrufen
+        const { data: existingEntry, error: fetchError } = await supabase
+            .from('products_sales')
+            .select('count')
+            .eq('id', item.id)
+            .single();
+
+        if (existingEntry) {
+            // Wenn vorhanden: Erhöhen
+            await supabase
+                .from('products_sales')
+                .update({ count: (existingEntry.count || 0) + item.quantity })
+                .eq('id', item.id);
+        } else {
+            // Wenn nicht vorhanden: Neu anlegen
+            await supabase
+                .from('products_sales')
+                .insert([{
+                    id: item.id,
+                    name: item.name,
+                    category: item.category,
+                    subcategory: item.subcategory,
+                    count: item.quantity
+                }]);
+        }
+    }
     
     if (appliedVoucher?.type === 'single') {
         await supabase.from('vouchers').delete().eq('code', appliedVoucher.code);
     }
     
     alert('Kassiervorgang erfolgreich abgeschlossen!');
-    cart = []; appliedVoucher = null; tipInput.value = ''; voucherCodeInput.value = ''; updateCart();
+    cart = []; appliedVoucher = null; tipInput.value = ''; voucherCodeInput.value = ''; 
+    // paymentMethod bleibt erhalten (wird nicht zurückgesetzt)
+    updateCart();
 }
 
 // --- INIT ---
@@ -292,6 +327,12 @@ function init() {
     btnLogout.onclick = handleLogout;
     btnTipAmount.onclick = () => { tipMode = 'amount'; btnTipAmount.classList.add('active'); btnTipTotal.classList.remove('active'); updateTotalsOnly(); };
     btnTipTotal.onclick = () => { tipMode = 'total'; btnTipTotal.classList.add('active'); btnTipAmount.classList.remove('active'); updateTotalsOnly(); };
+    
+    btnPayCash.onclick = () => { paymentMethod = 'Bar'; btnPayCash.classList.add('active'); btnPayCard.classList.remove('active'); };
+    btnPayCard.onclick = () => { paymentMethod = 'Karte'; btnPayCard.classList.add('active'); btnPayCash.classList.remove('active'); };
+
+    tipInput.oninput = updateTotalsOnly;
+
     btnApplyVoucher.onclick = applyVoucher;
     btnCheckout.onclick = checkout;
     document.querySelectorAll('.btn-quick-tip').forEach(btn => {
