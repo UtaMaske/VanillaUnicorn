@@ -8,6 +8,8 @@ const userDisplay = document.getElementById('user-display');
 const btnLogout = document.getElementById('btn-logout');
 const totalSalesAll = document.getElementById('total-sales-all');
 const totalTipsAll = document.getElementById('total-tips-all');
+const totalBossCash = document.getElementById('total-boss-cash');
+const labelBossCash = document.getElementById('label-boss-cash');
 const employeeStatsBody = document.getElementById('employee-stats-body');
 const allTransactionsBody = document.getElementById('all-transactions-body');
 const hourlyStatsBody = document.getElementById('hourly-stats-body');
@@ -22,6 +24,7 @@ const statsDateInput = document.getElementById('stats-date');
 const tabBtns = document.querySelectorAll('.tab-btn');
 const tabContents = document.querySelectorAll('.tab-content');
 let hourlyChart = null;
+let productCharts = []; // Array für mehrere Diagramm-Instanzen
 let editingProductId = null; // Trackt, welches Produkt gerade bearbeitet wird
 
 // Kategorie-Umschaltung für Produkte
@@ -61,6 +64,11 @@ tabBtns.forEach(btn => {
         tabContents.forEach(c => c.classList.remove('active'));
         btn.classList.add('active');
         document.getElementById(btn.dataset.tab).classList.add('active');
+        
+        // Spezielle Logik für Produkt Statistik Tab
+        if (btn.dataset.tab === 'tab-prod-stats') {
+            loadProductStats();
+        }
     };
 });
 
@@ -106,6 +114,13 @@ async function checkAuthAndLoad() {
         document.querySelector('[data-tab="tab-vouchers"]').style.display = 'none';
         document.querySelector('[data-tab="tab-statistik"]').style.display = 'none';
         document.querySelector('[data-tab="tab-produkte"]').style.display = 'none';
+        document.querySelector('[data-tab="tab-prod-stats"]').style.display = 'none';
+
+        // Setze Mitarbeiter-Tab als aktiv (da Statistik-Tab versteckt ist)
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.querySelector('[data-tab="tab-mitarbeiter"]').classList.add('active');
+        document.getElementById('tab-mitarbeiter').classList.add('active');
         
         // Benenne "Mitarbeiter" Tab um und passe Tabellenkopf an
         const empTabBtn = document.querySelector('[data-tab="tab-mitarbeiter"]');
@@ -183,6 +198,27 @@ async function checkAuthAndLoad() {
 
     loadStats(profile);
     
+    // View Toggle Logik für Live Statistik
+    const btnViewChart = document.getElementById('btn-view-chart');
+    const btnViewList = document.getElementById('btn-view-list');
+    const chartContainer = document.getElementById('chart-view-container');
+    const listContainer = document.getElementById('list-view-container');
+
+    if (btnViewChart && btnViewList) {
+        btnViewChart.onclick = () => {
+            btnViewChart.classList.add('active');
+            btnViewList.classList.remove('active');
+            chartContainer.style.display = 'block';
+            listContainer.style.display = 'none';
+        };
+        btnViewList.onclick = () => {
+            btnViewList.classList.add('active');
+            btnViewChart.classList.remove('active');
+            chartContainer.style.display = 'none';
+            listContainer.style.display = 'block';
+        };
+    }
+
     // Datums-Filter Initialisierung
     if (statsDateInput) {
         // Initialer Wert im deutschen Format
@@ -282,6 +318,11 @@ async function loadStats(currentUserProfile, targetDate = null) {
     document.querySelector('.stat-card:nth-child(1) h3').textContent = isOwner ? `Umsatz ${dateLabel}` : `Mein Umsatz ${dateLabel}`;
     document.querySelector('.stat-card:nth-child(2) h3').textContent = isOwner ? `Trinkgeld ${dateLabel}` : `Mein Trinkgeld ${dateLabel}`;
     
+    // Label für Abgabe anpassen
+    if (labelBossCash) {
+        labelBossCash.textContent = isOwner ? `Abgabe an Chef (Gesamt) ${dateLabel}` : `Abgabe an Chef (Ich) ${dateLabel}`;
+    }
+
     // WICHTIG: Überschreibe 'today' mit dem gewählten Datum für die restliche Logik
     const today = displayDate;
 
@@ -294,6 +335,7 @@ async function loadStats(currentUserProfile, targetDate = null) {
         employeeStatsBody.innerHTML = '<tr><td colspan="4">Keine Daten vorhanden.</td></tr>';
         totalSalesAll.textContent = '0.00 $';
         totalTipsAll.textContent = '0.00 $';
+        if (totalBossCash) totalBossCash.textContent = '0.00 $';
         return;
     }
 
@@ -301,6 +343,9 @@ async function loadStats(currentUserProfile, targetDate = null) {
     const safeProfiles = profiles || [currentUserProfile];
     let todaySales = 0;
     let todayTips = 0;
+    let todayBarSales = 0;   // Reiner Bar-Umsatz (ohne Tip)
+    let todayCardTips = 0;   // Trinkgeld, das über Karte gezahlt wurde
+
     const stats = {};
     const dailyStats = {}; // Für Mitarbeiter-Ansicht (gruppiert nach Business Day)
     const hourlyStats = {}; 
@@ -328,6 +373,15 @@ async function loadStats(currentUserProfile, targetDate = null) {
         if (today === 'Gesamt' || transDate === today) {
             todaySales += t.subtotal;
             todayTips += t.tip_amount;
+            
+            // Logik für Abgabe an Chef:
+            // Bar-Umsatz sammeln
+            if (t.payment_method === 'Bar') {
+                todayBarSales += t.subtotal;
+            } else if (t.payment_method === 'Karte') {
+                // Karten-Trinkgeld sammeln (da dies aus der Barkasse ausgezahlt wird)
+                todayCardTips += t.tip_amount;
+            }
 
             const dateObj = new Date(t.created_at);
 
@@ -344,9 +398,10 @@ async function loadStats(currentUserProfile, targetDate = null) {
 
             const email = profile ? shortenEmail(profile.email) : 'Unbekannt';
 
-            // Gruppierung (30-Minuten-Intervalle)
+            // Gruppierung (10-Minuten-Intervalle)
             const hour = dateObj.getHours().toString().padStart(2, '0');
-            const minutes = dateObj.getMinutes() < 30 ? '00' : '30';
+            const minuteVal = Math.floor(dateObj.getMinutes() / 10) * 10;
+            const minutes = minuteVal.toString().padStart(2, '0');
             const timeKey = `${hour}:${minutes}`;
             
             if (!hourlyStats[timeKey]) hourlyStats[timeKey] = { sales: 0, tips: 0, count: 0 };
@@ -390,6 +445,16 @@ async function loadStats(currentUserProfile, targetDate = null) {
     totalSalesAll.textContent = todaySales.toFixed(2) + ' $';
     totalTipsAll.textContent = todayTips.toFixed(2) + ' $';
 
+    // Abgabe an Chef Berechnung
+    if (totalBossCash) {
+        // Korrekte Formel: Was bar reinkam minus was der Mitarbeiter an Trinkgeld behalten darf
+        // (Bar_Umsatz + Bar_Tip) - (Bar_Tip + Karten_Tip) = Bar_Umsatz - Karten_Tip
+        const abgabe = todayBarSales - todayCardTips;
+        totalBossCash.textContent = abgabe.toFixed(2) + ' $';
+        // Falls negativ (Mitarbeiter bekommt Geld), rot färben
+        totalBossCash.style.color = abgabe < 0 ? '#dc3545' : '#166534';
+    }
+
     // Tabellen-Inhalt rendern
     employeeStatsBody.innerHTML = '';
     if (isOwner) {
@@ -431,6 +496,7 @@ async function loadStats(currentUserProfile, targetDate = null) {
         const chartLabels = sortedHours;
         const chartDataSales = sortedHours.map(h => hourlyStats[h].sales);
         const chartDataTips = sortedHours.map(h => hourlyStats[h].tips);
+        const chartDataCounts = sortedHours.map(h => hourlyStats[h].count);
 
         sortedHours.forEach(hour => {
             const s = hourlyStats[hour];
@@ -438,11 +504,11 @@ async function loadStats(currentUserProfile, targetDate = null) {
             tr.innerHTML = `<td>${hour}</td><td>${s.sales.toFixed(2)}</td><td>${s.tips.toFixed(2)}</td><td>${s.count}</td>`;
             hourlyStatsBody.appendChild(tr);
         });
-        renderChart(chartLabels, chartDataSales, chartDataTips);
+        renderChart(chartLabels, chartDataSales, chartDataTips, chartDataCounts);
     }
 }
 
-function renderChart(labels, salesData, tipsData) {
+function renderChart(labels, salesData, tipsData, countsData) {
     const ctx = document.getElementById('hourly-sales-chart').getContext('2d');
     
     if (hourlyChart) {
@@ -494,6 +560,11 @@ function renderChart(labels, salesData, tipsData) {
                     callbacks: {
                         label: function(context) {
                             return context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' $';
+                        },
+                        footer: function(tooltipItems) {
+                            const index = tooltipItems[0].dataIndex;
+                            const count = countsData[index];
+                            return 'Transaktionen: ' + count;
                         }
                     }
                 }
@@ -768,5 +839,121 @@ function resetProductForm() {
     btnCreateProduct.innerHTML = '<span class="icon">💾</span> Speichern';
     btnCreateProduct.style.background = ''; 
     btnCreateProduct.style.color = '';
+}
+
+// --- PRODUKT STATISTIK ---
+async function loadProductStats() {
+    console.log('Lade Produkt Verkaufsstatistiken...');
+    const { data: sales, error } = await supabase
+        .from('products_sales')
+        .select('*')
+        .order('category', { ascending: true })
+        .order('subcategory', { ascending: true })
+        .order('count', { ascending: false });
+
+    if (error) {
+        console.error('Fehler beim Laden der Produkt-Statistik:', error.message);
+        return;
+    }
+
+    const container = document.getElementById('product-stats-container');
+    container.innerHTML = ''; // Leeren
+
+    // Alte Charts zerstören
+    productCharts.forEach(c => c.destroy());
+    productCharts = [];
+
+    if (!sales || sales.length === 0) {
+        container.innerHTML = '<p>Keine Verkaufsdaten gefunden.</p>';
+        return;
+    }
+
+    // Gruppieren nach Kategorie
+    const groups = {};
+    sales.forEach(s => {
+        const cat = s.category || 'Sonstiges';
+        if (!groups[cat]) groups[cat] = [];
+        groups[cat].push(s);
+    });
+
+    // Definierte Reihenfolge der Kategorien
+    const categoryOrder = ['Trinken', 'Essen', 'Privat', 'Sonstiges'];
+    const sortedCategories = Object.keys(groups).sort((a, b) => {
+        let indexA = categoryOrder.indexOf(a);
+        let indexB = categoryOrder.indexOf(b);
+        if (indexA === -1) indexA = 99;
+        if (indexB === -1) indexB = 99;
+        return indexA - indexB;
+    });
+
+    // Für jede Gruppe ein Diagramm erstellen (in der sortierten Reihenfolge)
+    for (const category of sortedCategories) {
+        const items = groups[category];
+        const catDiv = document.createElement('div');
+        catDiv.className = 'category-stats-block';
+        catDiv.style.marginBottom = '40px';
+        catDiv.style.background = 'white';
+        catDiv.style.padding = '20px';
+        catDiv.style.borderRadius = '12px';
+        catDiv.style.boxShadow = '0 4px 10px rgba(0,0,0,0.05)';
+
+        const title = document.createElement('h3');
+        title.textContent = category;
+        title.style.borderBottom = '2px solid #eee';
+        title.style.paddingBottom = '10px';
+        title.style.marginBottom = '20px';
+        catDiv.appendChild(title);
+
+        const canvasWrapper = document.createElement('div');
+        // Höhe dynamisch an Anzahl der Produkte anpassen (ca. 40px pro Balken)
+        const dynamicHeight = Math.max(200, items.length * 40);
+        canvasWrapper.style.position = 'relative';
+        canvasWrapper.style.height = `${dynamicHeight}px`;
+        
+        const canvas = document.createElement('canvas');
+        canvasWrapper.appendChild(canvas);
+        catDiv.appendChild(canvasWrapper);
+        container.appendChild(catDiv);
+
+        renderCategoryChart(canvas, items, category);
+    }
+}
+
+function renderCategoryChart(canvas, items, category) {
+    const labels = items.map(s => s.subcategory ? `[${s.subcategory}] ${s.name}` : s.name);
+    const data = items.map(s => s.count);
+    
+    let color = '#6c757d';
+    if (category === 'Essen') color = '#0056b3';
+    if (category === 'Trinken') color = '#28a745';
+
+    const newChart = new Chart(canvas.getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Verkaufte Anzahl',
+                data: data,
+                backgroundColor: color,
+                borderColor: color,
+                borderWidth: 1
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: { stepSize: 1 }
+                }
+            },
+            plugins: {
+                legend: { display: false }
+            }
+        }
+    });
+    productCharts.push(newChart);
 }
 
