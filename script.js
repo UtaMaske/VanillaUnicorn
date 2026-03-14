@@ -12,6 +12,7 @@ let tipMode = 'total';
 let appliedVoucher = null;
 let currentUserProfile = null; 
 let paymentMethod = 'Bar'; // Standardmäßig Barzahlung
+let selectedPrivatProduct = null; // Trackt das aktuell gewählte Privat-Produkt
 
 // DOM Elemente
 const loginContainer = document.getElementById('login-container');
@@ -24,6 +25,10 @@ const loginError = document.getElementById('login-error');
 const userDisplay = document.getElementById('user-display');
 const userRole = document.getElementById('user-role');
 const navDashboard = document.getElementById('nav-dashboard');
+
+const employeeModal = document.getElementById('employee-modal');
+const employeeListDiv = document.getElementById('employee-list');
+const btnCloseModal = document.getElementById('btn-close-modal');
 
 const essenProdukteDiv = document.getElementById('essen-produkte');
 const trinkenShotsDiv = document.getElementById('trinken-shots');
@@ -122,11 +127,13 @@ function renderProducts() {
     products.forEach(p => {
         const div = document.createElement('div');
         div.className = 'produkt-item';
-        div.innerHTML = `<span>${p.name}</span><span>${p.price.toFixed(2)} $</span>`;
+        div.innerHTML = `<span>${p.name}</span><span>${Math.round(p.price)} $</span>`;
         div.onclick = () => {
-            const item = cart.find(i => String(i.id) === String(p.id));
-            if (item) item.quantity++; else cart.push({...p, quantity: 1});
-            updateCart();
+            if (p.category === 'Privat') {
+                openEmployeeModal(p);
+            } else {
+                addToCart(p);
+            }
         };
 
         if (p.category === 'Essen') {
@@ -146,6 +153,77 @@ function renderProducts() {
     });
 }
 
+function addToCart(p) {
+    // Suche nach exakt diesem Produkt im Warenkorb (Name muss auch übereinstimmen wegen Privat-Auswahl)
+    const item = cart.find(i => String(i.id) === String(p.id) && i.name === p.name);
+    if (item) {
+        item.quantity++;
+    } else {
+        cart.push({...p, quantity: 1});
+    }
+    updateCart();
+}
+
+// --- MODAL LOGIK ---
+function shortenEmail(email) {
+    if (!email || !email.includes('@')) return email || 'Unbekannt';
+    let name = email.split('@')[0];
+    return name.split('.').map(part => {
+        if (!part) return '';
+        return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+    }).join(' ');
+}
+
+async function fetchEmployees() {
+    const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('position', 'Tänzer*in')
+        .order('email', { ascending: true });
+    if (error) { console.error('Mitarbeiter laden fehlgeschlagen:', error); return []; }
+    return data || [];
+}
+
+function openEmployeeModal(product) {
+    selectedPrivatProduct = product;
+    employeeModal.style.display = 'flex';
+    renderEmployees();
+}
+
+async function renderEmployees() {
+    employeeListDiv.innerHTML = '<p style="grid-column: 1/-1;">Lade Mitarbeiter...</p>';
+    const employees = await fetchEmployees();
+    employeeListDiv.innerHTML = '';
+    employees.forEach(emp => {
+        const div = document.createElement('div');
+        div.className = 'employee-item';
+        const displayName = emp.name || shortenEmail(emp.email);
+        div.textContent = displayName;
+        div.onclick = () => {
+            selectEmployee(emp);
+        };
+        employeeListDiv.appendChild(div);
+    });
+}
+
+function selectEmployee(emp) {
+    const displayName = emp.name || shortenEmail(emp.email);
+    const productWithEmp = {
+        ...selectedPrivatProduct,
+        name: `${selectedPrivatProduct.name} (${displayName})`,
+        bookedEmployeeId: emp.id,
+        bookedEmployeeName: displayName // Speichern für products_sales
+    };
+    
+    addToCart(productWithEmp);
+    closeEmployeeModal();
+}
+
+function closeEmployeeModal() {
+    employeeModal.style.display = 'none';
+    selectedPrivatProduct = null;
+}
+
 function updateCart() {
     cartItemsUl.innerHTML = '';
     cart.forEach(item => {
@@ -153,15 +231,13 @@ function updateCart() {
         li.innerHTML = `
             <span class="item-name">${item.name}</span>
             <div class="quantity-container">
-                <span class="qty-label">Menge:</span>
                 <div class="quantity-controls">
                     <button class="qty-btn minus" data-id="${item.id}">-</button>
                     <input type="number" class="item-quantity" data-id="${item.id}" value="${item.quantity}" min="0">
                     <button class="qty-btn plus" data-id="${item.id}">+</button>
                 </div>
             </div>
-            <span class="item-total-price">${(item.price * item.quantity).toFixed(2)} $</span>
-            <button class="remove-btn" data-id="${item.id}">🗑️</button>
+            <span class="item-total-price">${Math.round(item.price * item.quantity)} $</span>
         `;
         cartItemsUl.appendChild(li);
     });
@@ -176,10 +252,6 @@ function updateCart() {
             else cart = cart.filter(i => String(i.id) !== String(id));
             updateCart();
         };
-    });
-
-    document.querySelectorAll('.remove-btn').forEach(btn => {
-        btn.onclick = (e) => { cart = cart.filter(i => String(i.id) !== String(e.target.dataset.id)); updateCart(); };
     });
 
     document.querySelectorAll('.item-quantity').forEach(input => {
@@ -201,13 +273,13 @@ function updateTotalsOnly() {
     let discount = 0;
     if (appliedVoucher) {
         discount = appliedVoucher.discount_type === 'percent' ? subtotal * (appliedVoucher.discount / 100) : appliedVoucher.discount;
-        voucherStatusDiv.innerHTML = `<span class="voucher-applied">-${discount.toFixed(2)} $</span>`;
+        voucherStatusDiv.innerHTML = `<span class="voucher-applied">-${Math.round(discount)} $</span>`;
     }
     let afterDiscount = Math.max(0, subtotal - discount);
     const tipVal = parseFloat(tipInput.value) || 0;
     tipAmount = tipMode === 'total' ? (tipVal > afterDiscount ? tipVal - afterDiscount : 0) : tipVal;
-    tipDisplayInfo.textContent = `Trinkgeld: ${tipAmount.toFixed(2)} $`;
-    totalSpan.textContent = (afterDiscount + tipAmount).toFixed(2);
+    tipDisplayInfo.textContent = `Trinkgeld: ${Math.round(tipAmount)} $`;
+    totalSpan.textContent = Math.round(afterDiscount + tipAmount);
 }
 
 function applyQuickTip(percent) {
@@ -216,21 +288,49 @@ function applyQuickTip(percent) {
     if (appliedVoucher) disc = appliedVoucher.discount_type === 'percent' ? subtotal * (appliedVoucher.discount / 100) : appliedVoucher.discount;
     let after = Math.max(0, subtotal - disc);
     let tip = after * (percent / 100);
-    tipInput.value = tipMode === 'total' ? (after + tip).toFixed(2) : tip.toFixed(2);
+    tipInput.value = tipMode === 'total' ? Math.round(after + tip) : Math.round(tip);
     updateTotalsOnly();
 }
 
 async function applyVoucher() {
-    const code = voucherCodeInput.value.trim();
+    const code = voucherCodeInput.value.trim().toUpperCase();
     if (!code) { appliedVoucher = null; updateTotalsOnly(); return; }
-    const { data, error } = await supabase.from('vouchers').select('*').eq('code', code).single();
-    if (data && !error) {
-        appliedVoucher = data;
-        voucherStatusDiv.innerHTML = `<span class="voucher-applied">Aktiv!</span>`;
-    } else {
+    
+    const { data: voucher, error } = await supabase.from('vouchers').select('*').eq('code', code).single();
+    
+    if (error || !voucher) {
         appliedVoucher = null;
         voucherStatusDiv.innerHTML = `<span class="voucher-error">Ungültig</span>`;
+        updateTotalsOnly();
+        return;
     }
+
+    // --- Prüfung Ablaufdatum ---
+    if (voucher.expiry) {
+        const expiryDate = new Date(voucher.expiry);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Nur Datum vergleichen
+        
+        if (expiryDate < today) {
+            appliedVoucher = null;
+            voucherStatusDiv.innerHTML = `<span class="voucher-error">Abgelaufen</span>`;
+            alert('Dieser Gutschein ist am ' + expiryDate.toLocaleDateString('de-DE') + ' abgelaufen.');
+            updateTotalsOnly();
+            return;
+        }
+    }
+
+    // --- Prüfung ob Einmal-Gutschein schon genutzt (falls nicht gelöscht) ---
+    if (voucher.type === 'single' && (voucher.times_used || 0) > 0) {
+        appliedVoucher = null;
+        voucherStatusDiv.innerHTML = `<span class="voucher-error">Bereits genutzt</span>`;
+        alert('Dieser Einmal-Gutschein wurde bereits eingelöst.');
+        updateTotalsOnly();
+        return;
+    }
+
+    appliedVoucher = voucher;
+    voucherStatusDiv.innerHTML = `<span class="voucher-applied">Aktiv!</span>`;
     updateTotalsOnly();
 }
 
@@ -284,21 +384,19 @@ async function checkout() {
 
     // --- NEU: Verkaufszahlen in products_sales aktualisieren ---
     for (const item of cart) {
-        // Zuerst aktuellen Zählerstand abrufen
-        const { data: existingEntry, error: fetchError } = await supabase
+        // 1. Zuerst das Produkt selbst aktualisieren (oder anlegen)
+        const { data: existingEntry } = await supabase
             .from('products_sales')
             .select('count')
             .eq('id', item.id)
             .single();
 
         if (existingEntry) {
-            // Wenn vorhanden: Erhöhen
             await supabase
                 .from('products_sales')
                 .update({ count: (existingEntry.count || 0) + item.quantity })
                 .eq('id', item.id);
         } else {
-            // Wenn nicht vorhanden: Neu anlegen
             await supabase
                 .from('products_sales')
                 .insert([{
@@ -308,6 +406,34 @@ async function checkout() {
                     subcategory: item.subcategory,
                     count: item.quantity
                 }]);
+        }
+
+        // 2. WENN Kategorie "Privat": Statistik für die Person (Mitarbeiter) erfassen
+        if (item.category === 'Privat' && item.bookedEmployeeId) {
+            const { data: existingEmpEntry } = await supabase
+                .from('products_sales')
+                .select('count')
+                .eq('id', item.bookedEmployeeId)
+                .single();
+
+            if (existingEmpEntry) {
+                // Wenn Person schon drin: Count erhöhen
+                await supabase
+                    .from('products_sales')
+                    .update({ count: (existingEmpEntry.count || 0) + item.quantity })
+                    .eq('id', item.bookedEmployeeId);
+            } else {
+                // Wenn Person noch nicht drin: Neu anlegen (Kategorie "Tänzer*in", Subcategory null)
+                await supabase
+                    .from('products_sales')
+                    .insert([{
+                        id: item.bookedEmployeeId,
+                        name: item.bookedEmployeeName,
+                        category: 'Tänzer*innen',
+                        subcategory: null,
+                        count: item.quantity
+                    }]);
+            }
         }
     }
     
@@ -335,6 +461,7 @@ function init() {
 
     btnApplyVoucher.onclick = applyVoucher;
     btnCheckout.onclick = checkout;
+    btnCloseModal.onclick = closeEmployeeModal;
     document.querySelectorAll('.btn-quick-tip').forEach(btn => {
         btn.onclick = (e) => { applyQuickTip(parseInt(e.target.dataset.percent)); document.querySelectorAll('.btn-quick-tip').forEach(b => b.classList.remove('active')); e.target.classList.add('active'); };
     });
