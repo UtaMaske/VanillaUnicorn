@@ -4,15 +4,18 @@ const supabaseUrl = 'https://cloiwnjtyrmnoeoqhvag.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsb2l3bmp0eXJtbm9lb3FodmFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNTMzMTIsImV4cCI6MjA4ODcyOTMxMn0.JGZOGytcTj0keyoANSSkqm8wGnFL3EOmsg1MqFpi8Es'; 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// DOM Elemente
 const userDisplay = document.getElementById('user-display');
 const btnLogout = document.getElementById('btn-logout');
 const totalSalesAll = document.getElementById('total-sales-all');
 const totalTipsAll = document.getElementById('total-tips-all');
 const totalBossCash = document.getElementById('total-boss-cash');
 const labelBossCash = document.getElementById('label-boss-cash');
-const employeeStatsBody = document.getElementById('employee-stats-body');
-const allTransactionsBody = document.getElementById('all-transactions-body');
+
+const employeeStatsBodyLive = document.getElementById('employee-stats-body-live');
+const allTransactionsBodyLive = document.getElementById('all-transactions-body-live');
 const hourlyStatsBody = document.getElementById('hourly-stats-body');
+
 const vouchersBody = document.getElementById('vouchers-body');
 const btnCreateVoucher = document.getElementById('btn-create-voucher');
 const productsBody = document.getElementById('products-body');
@@ -20,940 +23,607 @@ const btnCreateProduct = document.getElementById('btn-create-product');
 const pCategorySelect = document.getElementById('p-category');
 const pSubcatGroup = document.getElementById('p-subcat-group');
 
+const usersAdminBody = document.getElementById('users-admin-body');
+const btnCreateUser = document.getElementById('btn-create-user');
+
 const statsDateInput = document.getElementById('stats-date');
 const tabBtns = document.querySelectorAll('.tab-btn');
 const tabContents = document.querySelectorAll('.tab-content');
-let hourlyChart = null;
-let productCharts = []; // Array für mehrere Diagramm-Instanzen
-let editingProductId = null; // Trackt, welches Produkt gerade bearbeitet wird
 
-// Kategorie-Umschaltung für Produkte
-if (pCategorySelect) {
-    pCategorySelect.onchange = () => {
-        pSubcatGroup.style.display = pCategorySelect.value === 'Trinken' ? 'block' : 'none';
-    };
+// Globale Variablen
+let hourlyChart = null;
+let productCharts = []; 
+let activeProductCat = 'Trinken'; 
+let currentUserProfile = null; 
+let lastSelectedDate = null; // Speichert das letzte ausgewählte Datum 
+
+// --- HILFSFUNKTIONEN ---
+function formatPrice(val) {
+    const num = parseFloat(val) || 0;
+    // Immer ohne Nachkommastellen anzeigen
+    return Math.round(num) + '$';
 }
 
-// Hilfsfunktion: E-Mail kürzen und formatieren (Max Mustermann)
 function shortenEmail(email) {
     if (!email || !email.includes('@')) return email || 'Unbekannt';
-    let name = email.split('@')[0]; // Teil vor dem @
-    
-    // Formatierung: Punkt durch Leerzeichen ersetzen, Erster Buchstabe groß, Buchstabe nach Leerzeichen groß
+    let name = email.split('@')[0];
     return name.split('.').map(part => {
         if (!part) return '';
         return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
     }).join(' ');
 }
 
-// Hilfsfunktion: Business-Datum berechnen (Tag endet erst um 05:59 Uhr)
 function getBusinessDate(dateInput) {
     const d = new Date(dateInput);
-    const hours = d.getHours();
-    // Wenn vor 6 Uhr morgens, ziehe einen Tag ab
-    if (hours < 6) {
-        d.setDate(d.getDate() - 1);
-    }
+    if (d.getHours() < 6) d.setDate(d.getDate() - 1);
     return d.toLocaleDateString('de-DE');
 }
 
-// Tab Logik
-tabBtns.forEach(btn => {
-    btn.onclick = () => {
-        tabBtns.forEach(b => b.classList.remove('active'));
-        tabContents.forEach(c => c.classList.remove('active'));
-        btn.classList.add('active');
-        document.getElementById(btn.dataset.tab).classList.add('active');
-        
-        // Spezielle Logik für Produkt Statistik Tab
-        if (btn.dataset.tab === 'tab-prod-stats') {
-            loadProductStats();
-        }
-    };
-});
+// --- INITIALISIERUNG ---
 
-async function checkAuthAndLoad() {
-    console.log('Dashboard: Prüfe Auth...');
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    if (!session) {
-        console.log('Kein User eingeloggt. Umleitung zum Login...');
-        window.location.href = 'Index.html';
-        return;
+function init() {
+    // Tab Logik
+    tabBtns.forEach(btn => {
+        btn.onclick = () => {
+            tabBtns.forEach(b => b.classList.remove('active'));
+            tabContents.forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            const target = document.getElementById(btn.dataset.tab);
+            if (target) target.classList.add('active');
+            if (btn.dataset.tab === 'tab-prod-stats') loadProductStats();
+        };
+    });
+
+    // Kategorie-Umschaltung für Produkt-Erstellung
+    if (pCategorySelect) {
+        pCategorySelect.onchange = () => {
+            pSubcatGroup.style.display = pCategorySelect.value === 'Trinken' ? 'block' : 'none';
+        };
     }
 
-    const user = session.user;
-    userDisplay.textContent = user.email;
-    
-    // DEBUG: Suche alle Profile mit dieser E-Mail
-    const { data: allProfiles, error: allPError } = await supabase.from('users').select('*').eq('email', user.email);
-    console.log('DEBUG: Alle Profile für E-Mail ' + user.email + ':', allProfiles);
-    if (allProfiles && allProfiles.length > 1) {
-        console.warn('DEBUG: WARNUNG! Mehrere Profile für diese E-Mail gefunden. Das erklärt fehlende Daten.');
-    }
-
-    // Lade Profil
-    const { data: profile, error } = await supabase.from('users').select('*').eq('auth_user_id', user.id).single();
-
-    if (error || !profile) {
-        console.log('Kein Profil gefunden oder Fehler:', error?.message);
-        alert('Zugriff verweigert: Dein Benutzerprofil konnte nicht geladen werden.');
-        window.location.href = 'Index.html';
-        return;
-    }
-
-    console.log('Profil geladen:', profile.position);
-    
-    // UI Anpassungen basierend auf Rolle
-    if (profile.position !== 'Inhaber') {
-        document.querySelector('h1').textContent = 'Mitarbeiter Dashboard';
-        document.querySelector('.stat-card:nth-child(1) h3').textContent = 'Mein Umsatz';
-        document.querySelector('.stat-card:nth-child(2) h3').textContent = 'Mein Trinkgeld';
-        
-        // Verstecke Tabs für Mitarbeiter
-        document.querySelector('[data-tab="tab-vouchers"]').style.display = 'none';
-        document.querySelector('[data-tab="tab-statistik"]').style.display = 'none';
-        document.querySelector('[data-tab="tab-produkte"]').style.display = 'none';
-        document.querySelector('[data-tab="tab-prod-stats"]').style.display = 'none';
-
-        // Setze Mitarbeiter-Tab als aktiv (da Statistik-Tab versteckt ist)
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        document.querySelector('[data-tab="tab-mitarbeiter"]').classList.add('active');
-        document.getElementById('tab-mitarbeiter').classList.add('active');
-        
-        // Benenne "Mitarbeiter" Tab um und passe Tabellenkopf an
-        const empTabBtn = document.querySelector('[data-tab="tab-mitarbeiter"]');
-        if (empTabBtn) empTabBtn.textContent = 'Meine Statistik';
-        
-        const empTitle = document.querySelector('#tab-mitarbeiter h2');
-        if (empTitle) empTitle.textContent = 'Meine Auswertung';
-        
-        const tableHead = document.querySelector('#employee-stats-table thead');
-        if (tableHead) {
-            tableHead.innerHTML = `
-                <tr>
-                    <th>Datum</th>
-                    <th>Umsatz ($)</th>
-                    <th>Trinkgeld ($)</th>
-                    <th>Transaktionen</th>
-                </tr>
-            `;
-        }
-
-        // Entferne Mitarbeiter-Spalte aus Einzeltransaktionen
-        const transHead = document.querySelector('#all-transactions-table thead tr');
-        if (transHead) {
-            transHead.innerHTML = `
-                <th>Zeitpunkt</th>
-                <th>Umsatz ($)</th>
-                <th>Trinkgeld ($)</th>
-                <th>Gesamt ($)</th>
-                <th>Gutschein</th>
-                <th>Aktion</th>
-            `;
-        }
-    } else {
-        // Sicherstellen, dass Inhaber alles sehen (Reset falls vorher Mitarbeiter eingeloggt war)
-        document.querySelector('h1').textContent = 'Inhaber Dashboard';
-        document.querySelector('.stat-card:nth-child(1) h3').textContent = 'Umsatz Heute';
-        document.querySelector('.stat-card:nth-child(2) h3').textContent = 'Trinkgeld Heute';
-        
-        document.querySelector('[data-tab="tab-vouchers"]').style.display = 'inline-block';
-        document.querySelector('[data-tab="tab-statistik"]').style.display = 'inline-block';
-        document.querySelector('[data-tab="tab-produkte"]').style.display = 'inline-block';
-        
-        const empTabBtn = document.querySelector('[data-tab="tab-mitarbeiter"]');
-        if (empTabBtn) empTabBtn.textContent = 'Mitarbeiter';
-
-        const empTitle = document.querySelector('#tab-mitarbeiter h2');
-        if (empTitle) empTitle.textContent = 'Mitarbeiter Auswertung';
-
-        const tableHead = document.querySelector('#employee-stats-table thead');
-        if (tableHead) {
-            tableHead.innerHTML = `
-                <tr>
-                    <th>Mitarbeiter</th>
-                    <th>Position</th>
-                    <th>Umsatz ($)</th>
-                    <th>Trinkgeld ($)</th>
-                    <th>Transaktionen</th>
-                </tr>
-            `;
-        }
-
-        const transHead = document.querySelector('#all-transactions-table thead tr');
-        if (transHead) {
-            transHead.innerHTML = `
-                <th>Zeitpunkt</th>
-                <th>Mitarbeiter</th>
-                <th>Umsatz ($)</th>
-                <th>Trinkgeld ($)</th>
-                <th>Gesamt ($)</th>
-                <th>Gutschein</th>
-                <th>Aktion</th>
-            `;
-        }
-    }
-
-    loadStats(profile);
-    
     // View Toggle Logik für Live Statistik
     const btnViewChart = document.getElementById('btn-view-chart');
-    const btnViewList = document.getElementById('btn-view-list');
+    const btnViewTrans = document.getElementById('btn-view-trans');
+    const btnViewEmp = document.getElementById('btn-view-emp');
     const chartContainer = document.getElementById('chart-view-container');
-    const listContainer = document.getElementById('list-view-container');
+    const transContainer = document.getElementById('trans-view-container');
+    const empContainer = document.getElementById('emp-view-container');
 
-    if (btnViewChart && btnViewList) {
+    if (btnViewChart && btnViewTrans && btnViewEmp) {
         btnViewChart.onclick = () => {
             btnViewChart.classList.add('active');
-            btnViewList.classList.remove('active');
-            chartContainer.style.display = 'block';
-            listContainer.style.display = 'none';
+            btnViewTrans.classList.remove('active');
+            btnViewEmp.classList.remove('active');
+            if (chartContainer) chartContainer.style.display = 'block';
+            if (transContainer) transContainer.style.display = 'none';
+            if (empContainer) empContainer.style.display = 'none';
         };
-        btnViewList.onclick = () => {
-            btnViewList.classList.add('active');
+        btnViewTrans.onclick = () => {
+            btnViewTrans.classList.add('active');
             btnViewChart.classList.remove('active');
-            chartContainer.style.display = 'none';
-            listContainer.style.display = 'block';
+            btnViewEmp.classList.remove('active');
+            if (chartContainer) chartContainer.style.display = 'none';
+            if (transContainer) transContainer.style.display = 'block';
+            if (empContainer) empContainer.style.display = 'none';
+        };
+        btnViewEmp.onclick = () => {
+            btnViewEmp.classList.add('active');
+            btnViewChart.classList.remove('active');
+            btnViewTrans.classList.remove('active');
+            if (chartContainer) chartContainer.style.display = 'none';
+            if (transContainer) transContainer.style.display = 'none';
+            if (empContainer) empContainer.style.display = 'block';
         };
     }
 
-    // Datums-Filter Initialisierung
+    // Kauf-Statistik Filter
+    document.querySelectorAll('.prod-cat-btn').forEach(btn => {
+        btn.onclick = () => {
+            document.querySelectorAll('.prod-cat-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            activeProductCat = btn.dataset.cat;
+            loadProductStats();
+        };
+    });
+
+    // Datums-Filter
     if (statsDateInput) {
-        // Initialer Wert im deutschen Format
-        const initialDate = getBusinessDate(new Date());
-        statsDateInput.value = initialDate;
+        const today = getBusinessDate(new Date());
+        statsDateInput.value = today;
+        lastSelectedDate = today; // Initiales Datum speichern
         
-        // Da das Feld nun readonly ist, brauchen wir onchange nicht mehr direkt
-        // Die Steuerung erfolgt über die Pfeile
-
-        // Pfeil-Navigation
         document.getElementById('btn-prev-day').onclick = () => {
+            const currentValue = statsDateInput.value;
             let current;
-            if (statsDateInput.value === 'Gesamt') {
-                // Wenn 'Gesamt' aktiv, starte beim heutigen Business-Tag
-                const parts = getBusinessDate(new Date()).split('.');
+            
+            if (currentValue === 'Gesamt' && lastSelectedDate) {
+                // Wenn vorher "Alle" ausgewählt war, vom letzten Datum ausgehen
+                const parts = lastSelectedDate.split('.');
                 current = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
             } else {
-                const parts = statsDateInput.value.split('.');
+                // Normales Parsing
+                const parts = currentValue.split('.');
                 current = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
             }
+            
             current.setDate(current.getDate() - 1);
-            statsDateInput.value = current.toLocaleDateString('de-DE');
-            loadStats(profile, statsDateInput.value);
+            const newDate = current.toLocaleDateString('de-DE');
+            statsDateInput.value = newDate;
+            lastSelectedDate = newDate; // Neues Datum speichern
+            loadStats(currentUserProfile, newDate);
         };
-
+        
         document.getElementById('btn-next-day').onclick = () => {
+            const currentValue = statsDateInput.value;
             let current;
-            if (statsDateInput.value === 'Gesamt') {
-                // Wenn 'Gesamt' aktiv, starte beim heutigen Business-Tag
-                const parts = getBusinessDate(new Date()).split('.');
+            
+            if (currentValue === 'Gesamt' && lastSelectedDate) {
+                // Wenn vorher "Alle" ausgewählt war, vom letzten Datum ausgehen
+                const parts = lastSelectedDate.split('.');
                 current = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
             } else {
-                const parts = statsDateInput.value.split('.');
-                if (parts.length < 3) return; 
+                // Normales Parsing
+                const parts = currentValue.split('.');
                 current = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
             }
+            
             current.setDate(current.getDate() + 1);
-            statsDateInput.value = current.toLocaleDateString('de-DE');
-            loadStats(profile, statsDateInput.value);
+            const newDate = current.toLocaleDateString('de-DE');
+            statsDateInput.value = newDate;
+            lastSelectedDate = newDate; // Neues Datum speichern
+            loadStats(currentUserProfile, newDate);
         };
-
+        
         document.getElementById('btn-all-days').onclick = () => {
+            // Speichere das aktuelle Datum bevor zu "Gesamt" gewechselt wird
+            if (statsDateInput.value !== 'Gesamt') {
+                lastSelectedDate = statsDateInput.value;
+            }
             statsDateInput.value = 'Gesamt';
-            loadStats(profile, 'all');
+            loadStats(currentUserProfile, 'all');
         };
     }
 
+    if (btnCreateProduct) btnCreateProduct.onclick = handleCreateProduct;
+    if (btnCreateVoucher) btnCreateVoucher.onclick = handleCreateVoucher;
+    if (btnCreateUser) btnCreateUser.onclick = handleCreateUser;
+    if (btnLogout) btnLogout.onclick = async () => { await supabase.auth.signOut(); window.location.href = 'Index.html'; };
+
+    checkAuthAndLoad();
+}
+
+async function checkAuthAndLoad() {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { window.location.href = 'Index.html'; return; }
+
+    const user = session.user;
+    if (userDisplay) userDisplay.textContent = user.email;
+    
+    const { data: profile } = await supabase.from('users').select('*').eq('auth_user_id', user.id).single();
+    if (!profile) { window.location.href = 'Index.html'; return; }
+
+    currentUserProfile = profile;
+    loadStats(profile);
+    
     if (profile.position === 'Inhaber') {
         loadVouchers();
         loadProducts();
+        loadAdminUsers();
     }
 }
 
+// --- LIVE STATISTIK LADEN ---
+
 async function loadStats(currentUserProfile, targetDate = null) {
     const isOwner = currentUserProfile.position === 'Inhaber';
-    console.log('DEBUG: Starte loadStats für Datum:', targetDate || 'Heute');
-    
-    // ... Profile und Transaktionen laden (unverändert) ...
-    
-    // 1. Profile laden
-    const { data: profiles, error: profError } = await supabase.from('users').select('*');
-    if (profError) {
-        console.warn('DEBUG: Profil-Ladefehler (RLS?):', profError.message);
-    } else {
-        console.log('DEBUG: Profile erfolgreich geladen:', profiles?.length || 0);
-    }
-    
-    // 2. Transaktionen laden
-    const { data: allTransactions, error: transError } = await supabase
-        .from('transactions')
-        .select('*')
-        .order('created_at', { ascending: false });
+    const { data: profiles } = await supabase.from('users').select('*');
+    const { data: allTransactions, error } = await supabase.from('transactions').select('*').order('created_at', { ascending: false });
 
-    if (transError) {
-        console.error('DEBUG: Datenbank-Fehler beim Laden:', transError);
-        allTransactionsBody.innerHTML = `<tr><td colspan="7" style="color:red;">Fehler: ${transError.message}</td></tr>`;
-        return;
-    }
+    if (error) return;
 
-    // Welches Datum wollen wir anzeigen?
-    let displayDate;
-    if (targetDate === 'all') {
-        displayDate = 'Gesamt';
-    } else if (targetDate && targetDate.includes('-')) {
-        // Falls YYYY-MM-DD (von Pfeilen oder Input)
-        displayDate = targetDate.split('-').reverse().join('.');
-    } else if (targetDate && targetDate.includes('.')) {
-        // Falls bereits DD.MM.YYYY
-        displayDate = targetDate;
-    } else {
-        // Standard: Aktueller Business Day
-        displayDate = getBusinessDate(new Date());
-    }
-
-    // UI Titel anpassen
-    const dateLabel = (displayDate === getBusinessDate(new Date())) ? 'Heute' : displayDate;
-    document.querySelector('.stat-card:nth-child(1) h3').textContent = isOwner ? `Umsatz ${dateLabel}` : `Mein Umsatz ${dateLabel}`;
-    document.querySelector('.stat-card:nth-child(2) h3').textContent = isOwner ? `Trinkgeld ${dateLabel}` : `Mein Trinkgeld ${dateLabel}`;
-    
-    // Label für Abgabe anpassen
-    if (labelBossCash) {
-        labelBossCash.textContent = isOwner ? `Abgabe an Chef (Gesamt) ${dateLabel}` : `Abgabe an Chef (Ich) ${dateLabel}`;
-    }
-
-    // WICHTIG: Überschreibe 'today' mit dem gewählten Datum für die restliche Logik
+    let displayDate = targetDate === 'all' ? 'Gesamt' : (targetDate || getBusinessDate(new Date()));
     const today = displayDate;
-
-    // Alle erlaubten Transaktionen (für die Tabellen)
     const transactions = allTransactions.filter(t => isOwner || t.user_id === currentUserProfile.id);
 
-    if (!transactions || transactions.length === 0) {
-        console.warn('DEBUG: Keine Transaktionen gefunden.');
-        allTransactionsBody.innerHTML = '<tr><td colspan="7">Keine Transaktionen gefunden.</td></tr>';
-        employeeStatsBody.innerHTML = '<tr><td colspan="4">Keine Daten vorhanden.</td></tr>';
-        totalSalesAll.textContent = '0.00 $';
-        totalTipsAll.textContent = '0.00 $';
-        if (totalBossCash) totalBossCash.textContent = '0.00 $';
-        return;
-    }
-
-    // Ab hier beginnt die Verarbeitung der gefundenen Daten
+    let todaySales = 0, todayTips = 0, todayBarSales = 0, todayCardTips = 0;
+    const stats = {}, hourlyStats = {}, dailyHourlyStats = {};
     const safeProfiles = profiles || [currentUserProfile];
-    let todaySales = 0;
-    let todayTips = 0;
-    let todayBarSales = 0;   // Reiner Bar-Umsatz (ohne Tip)
-    let todayCardTips = 0;   // Trinkgeld, das über Karte gezahlt wurde
 
-    const stats = {};
-    const dailyStats = {}; // Für Mitarbeiter-Ansicht (gruppiert nach Business Day)
-    const hourlyStats = {}; 
-
-    // Initialisierung der Mitarbeiter-Stats (für den gewählten Zeitraum)
     safeProfiles.forEach(p => {
-        if (p.id && (isOwner || p.id === currentUserProfile.id)) {
+        if (isOwner || p.id === currentUserProfile.id) {
             stats[p.id] = { email: p.email, position: p.position, sales: 0, tips: 0, count: 0 };
         }
     });
 
-    allTransactionsBody.innerHTML = ''; 
+    if (allTransactionsBodyLive) allTransactionsBodyLive.innerHTML = '';
 
     transactions.forEach(t => {
         const transDate = getBusinessDate(t.created_at);
-        
-        // Täglich gruppieren nach BUSINESS DAY (Immer für die Historie)
-        const dateKey = transDate;
-        if (!dailyStats[dateKey]) dailyStats[dateKey] = { sales: 0, tips: 0, count: 0 };
-        dailyStats[dateKey].sales += t.subtotal;
-        dailyStats[dateKey].tips += t.tip_amount;
-        dailyStats[dateKey].count++;
-
-        // Filter für den aktuell ausgewählten Tag (oder ALLE)
         if (today === 'Gesamt' || transDate === today) {
             todaySales += t.subtotal;
             todayTips += t.tip_amount;
-            
-            // Logik für Abgabe an Chef:
-            // Bar-Umsatz sammeln
-            if (t.payment_method === 'Bar') {
-                todayBarSales += t.subtotal;
-            } else if (t.payment_method === 'Karte') {
-                // Karten-Trinkgeld sammeln (da dies aus der Barkasse ausgezahlt wird)
-                todayCardTips += t.tip_amount;
-            }
+            if (t.payment_method === 'Bar') todayBarSales += t.subtotal;
+            else if (t.payment_method === 'Karte') todayCardTips += t.tip_amount;
 
-            const dateObj = new Date(t.created_at);
-
-            // Statistiken pro Mitarbeiter (ID kann auth_user_id oder interne id sein)
-            // Wir suchen das Profil, um den richtigen Key in 'stats' zu treffen
             const profile = safeProfiles.find(p => p.id === t.user_id || p.auth_user_id === t.user_id);
             const statsKey = profile ? profile.id : t.user_id;
-
             if (stats[statsKey]) {
                 stats[statsKey].sales += t.subtotal;
                 stats[statsKey].tips += t.tip_amount;
                 stats[statsKey].count++;
             }
 
-            const email = profile ? shortenEmail(profile.email) : 'Unbekannt';
-
-            // Gruppierung (10-Minuten-Intervalle)
-            const hour = dateObj.getHours().toString().padStart(2, '0');
-            const minuteVal = Math.floor(dateObj.getMinutes() / 10) * 10;
-            const minutes = minuteVal.toString().padStart(2, '0');
-            const timeKey = `${hour}:${minutes}`;
+            const dateObj = new Date(t.created_at);
+            const hourKey = `${dateObj.getHours().toString().padStart(2, '0')}:${(Math.floor(dateObj.getMinutes() / 10) * 10).toString().padStart(2, '0')}`;
             
-            if (!hourlyStats[timeKey]) hourlyStats[timeKey] = { sales: 0, tips: 0, count: 0 };
-            hourlyStats[timeKey].sales += t.subtotal;
-            hourlyStats[timeKey].tips += t.tip_amount;
-            hourlyStats[timeKey].count++;
+            if (today === 'Gesamt') {
+                // Bei Gesamt-Ansicht: Sammle pro Tag und Stunde
+                const dayKey = transDate;
+                if (!dailyHourlyStats[dayKey]) dailyHourlyStats[dayKey] = {};
+                if (!dailyHourlyStats[dayKey][hourKey]) dailyHourlyStats[dayKey][hourKey] = { sales: 0, tips: 0, count: 0 };
+                dailyHourlyStats[dayKey][hourKey].sales += t.subtotal;
+                dailyHourlyStats[dayKey][hourKey].tips += t.tip_amount;
+                dailyHourlyStats[dayKey][hourKey].count++;
+            } else {
+                // Bei Tages-Ansicht: Normale stündliche Aggregation
+                if (!hourlyStats[hourKey]) hourlyStats[hourKey] = { sales: 0, tips: 0, count: 0 };
+                hourlyStats[hourKey].sales += t.subtotal;
+                hourlyStats[hourKey].tips += t.tip_amount;
+                hourlyStats[hourKey].count++;
+            }
 
-            // Zeile für "Einzeltransaktionen" Tabelle erstellen
-            const dateStr = dateObj.toLocaleString('de-DE');
-            const trRow = document.createElement('tr');
-            const actionHtml = isOwner ? `<td><button class="delete-transaction-btn" data-id="${t.id}" style="background:#dc3545; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">🗑️</button></td>` : '<td>-</td>';
-            const emailCell = isOwner ? `<td>${email}</td>` : '';
-
-            trRow.innerHTML = `
-                <td>${dateStr}</td>
-                ${emailCell}
-                <td>${t.subtotal.toFixed(2)}</td>
-                <td>${t.tip_amount.toFixed(2)}</td>
-                <td>${t.total_amount.toFixed(2)}</td>
-                <td>${t.voucher_code || '-'}</td>
-                ${actionHtml}
-            `;
-            allTransactionsBody.appendChild(trRow);
+            const tr = document.createElement('tr');
+            const action = isOwner ? `<td><button class="delete-transaction-btn del-trans" data-id="${t.id}">🗑️</button></td>` : '<td>-</td>';
+            tr.innerHTML = `<td>${dateObj.toLocaleString('de-DE')}</td>${isOwner ? `<td>${profile ? shortenEmail(profile.email) : 'Unbekannt'}</td>` : ''}<td>${formatPrice(t.subtotal)}</td><td>${formatPrice(t.tip_amount)}</td><td>${formatPrice(t.total_amount)}</td><td>${t.voucher_code || '-'}</td>${action}`;
+            if (allTransactionsBodyLive) allTransactionsBodyLive.appendChild(tr);
         }
     });
 
-    // ... (Event Listener für Löschen nur wenn Inhaber)
     if (isOwner) {
-        document.querySelectorAll('.delete-transaction-btn').forEach(btn => {
+        document.querySelectorAll('.del-trans').forEach(btn => {
             btn.onclick = async (e) => {
-                const transactionId = e.currentTarget.dataset.id;
-                if (confirm('Diese Transaktion wirklich unwiderruflich löschen?')) {
-                    const { error } = await supabase.from('transactions').delete().eq('id', transactionId);
-                    if (error) alert('Fehler beim Löschen: ' + error.message);
-                    else loadStats(currentUserProfile); 
+                if (confirm('Löschen?')) {
+                    await supabase.from('transactions').delete().eq('id', e.currentTarget.dataset.id);
+                    loadStats(currentUserProfile, statsDateInput.value);
                 }
             };
         });
     }
 
-    totalSalesAll.textContent = todaySales.toFixed(2) + ' $';
-    totalTipsAll.textContent = todayTips.toFixed(2) + ' $';
-
-    // Abgabe an Chef Berechnung
+    if (totalSalesAll) totalSalesAll.textContent = formatPrice(todaySales);
+    if (totalTipsAll) totalTipsAll.textContent = formatPrice(todayTips);
     if (totalBossCash) {
-        // Korrekte Formel: Was bar reinkam minus was der Mitarbeiter an Trinkgeld behalten darf
-        // (Bar_Umsatz + Bar_Tip) - (Bar_Tip + Karten_Tip) = Bar_Umsatz - Karten_Tip
         const abgabe = todayBarSales - todayCardTips;
-        totalBossCash.textContent = abgabe.toFixed(2) + ' $';
-        // Falls negativ (Mitarbeiter bekommt Geld), rot färben
+        totalBossCash.textContent = formatPrice(abgabe);
         totalBossCash.style.color = abgabe < 0 ? '#dc3545' : '#166534';
     }
 
-    // Tabellen-Inhalt rendern
-    employeeStatsBody.innerHTML = '';
-    if (isOwner) {
+    if (employeeStatsBodyLive) {
+        employeeStatsBodyLive.innerHTML = '';
         Object.values(stats).forEach(s => {
             const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${shortenEmail(s.email)}</td><td>${s.position}</td><td>${s.sales.toFixed(2)}</td><td>${s.tips.toFixed(2)}</td><td>${s.count}</td>`;
-            employeeStatsBody.appendChild(tr);
-        });
-    } else {
-        // Sicherstellen, dass HEUTE immer existiert (auch mit 0 Werten)
-        if (!dailyStats[today]) {
-            dailyStats[today] = { sales: 0, tips: 0, count: 0 };
-        }
-
-        const sortedDays = Object.keys(dailyStats).sort((a, b) => {
-            const dateA = new Date(a.split('.').reverse().join('-'));
-            const dateB = new Date(b.split('.').reverse().join('-'));
-            return dateB - dateA;
-        });
-
-        sortedDays.forEach(day => {
-            const s = dailyStats[day];
-            const tr = document.createElement('tr');
-            if (day === today) {
-                tr.style.backgroundColor = 'rgba(0, 86, 179, 0.05)';
-                tr.style.fontWeight = 'bold';
-            }
-            tr.innerHTML = `<td>${day} (Heute)</td><td>${s.sales.toFixed(2)}</td><td>${s.tips.toFixed(2)}</td><td>${s.count}</td>`;
-            if (day !== today) tr.innerHTML = `<td>${day}</td><td>${s.sales.toFixed(2)}</td><td>${s.tips.toFixed(2)}</td><td>${s.count}</td>`;
-            
-            employeeStatsBody.appendChild(tr);
+            tr.innerHTML = `<td>${shortenEmail(s.email)}</td><td>${s.position}</td><td>${formatPrice(s.sales)}</td><td>${formatPrice(s.tips)}</td><td>${s.count}</td>`;
+            employeeStatsBodyLive.appendChild(tr);
         });
     }
 
-    // Chart nur für Inhaber
     if (isOwner) {
-        hourlyStatsBody.innerHTML = '';
-        const sortedHours = Object.keys(hourlyStats).sort();
-        const chartLabels = sortedHours;
-        const chartDataSales = sortedHours.map(h => hourlyStats[h].sales);
-        const chartDataTips = sortedHours.map(h => hourlyStats[h].tips);
-        const chartDataCounts = sortedHours.map(h => hourlyStats[h].count);
-
-        sortedHours.forEach(hour => {
-            const s = hourlyStats[hour];
-            const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${hour}</td><td>${s.sales.toFixed(2)}</td><td>${s.tips.toFixed(2)}</td><td>${s.count}</td>`;
-            hourlyStatsBody.appendChild(tr);
-        });
-        renderChart(chartLabels, chartDataSales, chartDataTips, chartDataCounts);
+        let chartData;
+        if (today === 'Gesamt') {
+            // Bei Gesamt-Ansicht: Berechne Durchschnitt und Maximum pro 10-Minuten-Intervall
+            chartData = calculateAverageMaxStats(dailyHourlyStats);
+        } else {
+            // Bei Tages-Ansicht: Normale stündliche Daten
+            const sortedHours = Object.keys(hourlyStats).sort();
+            chartData = {
+                labels: sortedHours,
+                sales: sortedHours.map(h => hourlyStats[h].sales),
+                tips: sortedHours.map(h => hourlyStats[h].tips)
+            };
+        }
+        renderChart(chartData.labels, chartData.sales, chartData.tips, chartData.avgSales, chartData.maxSales, chartData.avgTips, chartData.maxTips, today === 'Gesamt');
     }
 }
 
-function renderChart(labels, salesData, tipsData, countsData) {
-    const ctx = document.getElementById('hourly-sales-chart').getContext('2d');
+function calculateAverageMaxStats(dailyHourlyStats) {
+    // Sammle alle möglichen 10-Minuten-Intervalle
+    const allHours = new Set();
+    Object.values(dailyHourlyStats).forEach(dayStats => {
+        Object.keys(dayStats).forEach(hour => allHours.add(hour));
+    });
     
-    if (hourlyChart) {
-        hourlyChart.destroy();
+    const sortedHours = Array.from(allHours).sort();
+    const avgSales = [], maxSales = [], avgTips = [], maxTips = [];
+    
+    sortedHours.forEach(hour => {
+        let totalSales = 0, totalTips = 0, dayCount = 0, maxSalesValue = 0, maxTipsValue = 0;
+        
+        // Gehe durch alle Tage für diese Stunde
+        Object.values(dailyHourlyStats).forEach(dayStats => {
+            if (dayStats[hour]) {
+                totalSales += dayStats[hour].sales;
+                totalTips += dayStats[hour].tips;
+                maxSalesValue = Math.max(maxSalesValue, dayStats[hour].sales);
+                maxTipsValue = Math.max(maxTipsValue, dayStats[hour].tips);
+                dayCount++;
+            }
+        });
+        
+        // Berechne Durchschnitt (nur wenn Daten vorhanden)
+        avgSales.push(dayCount > 0 ? totalSales / dayCount : 0);
+        avgTips.push(dayCount > 0 ? totalTips / dayCount : 0);
+        maxSales.push(maxSalesValue);
+        maxTips.push(maxTipsValue);
+    });
+    
+    return {
+        labels: sortedHours,
+        sales: avgSales, // Durchschnittlicher Umsatz pro 10-Minuten-Intervall
+        tips: avgTips, // Durchschnittliches Trinkgeld pro 10-Minuten-Intervall
+        avgSales: avgSales,
+        maxSales: maxSales,
+        avgTips: avgTips,
+        maxTips: maxTips
+    };
+}
+
+function renderChart(labels, sales, tips, avgSales = null, maxSales = null, avgTips = null, maxTips = null, isAllDays = false) {
+    const ctx = document.getElementById('hourly-sales-chart')?.getContext('2d');
+    if (!ctx) return;
+    if (hourlyChart) hourlyChart.destroy();
+
+    const datasets = [];
+
+    if (isAllDays) {
+        // Bei Gesamt-Ansicht: Zeige Durchschnitt und Maximum für Umsatz und Trinkgeld
+        datasets.push(
+            {
+                label: 'Ø Umsatz pro 10 Min',
+                data: avgSales || sales,
+                borderColor: '#0056b3',
+                backgroundColor: 'rgba(0, 86, 179, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 3,
+                borderWidth: 3
+            },
+            {
+                label: 'Max Umsatz pro 10 Min',
+                data: maxSales,
+                borderColor: '#dc3545',
+                backgroundColor: 'rgba(220, 53, 69, 0.1)',
+                fill: true,
+                tension: 0.4,
+                pointRadius: 3,
+                borderWidth: 3
+            },
+            {
+                label: 'Ø Trinkgeld pro 10 Min',
+                data: avgTips || tips,
+                borderColor: '#ff6b35',
+                backgroundColor: 'rgba(255, 107, 53, 0.1)',
+                fill: false,
+                tension: 0.4,
+                pointRadius: 4,
+                borderWidth: 2,
+                borderDash: [8, 4],
+                pointBackgroundColor: '#ff6b35',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+            },
+            {
+                label: 'Max Trinkgeld pro 10 Min',
+                data: maxTips,
+                borderColor: '#6f42c1',
+                backgroundColor: 'rgba(111, 66, 193, 0.1)',
+                fill: false,
+                tension: 0.4,
+                pointRadius: 4,
+                borderWidth: 2,
+                borderDash: [8, 4],
+                pointBackgroundColor: '#6f42c1',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2
+            }
+        );
+    } else {
+        // Bei Tages-Ansicht: Normale Umsatz/Trinkgeld Diagramme
+        datasets.push(
+            { label: 'Umsatz', data: sales, borderColor: '#0056b3', backgroundColor: 'rgba(0, 86, 179, 0.1)', fill: true, tension: 0.4 },
+            { label: 'Trinkgeld', data: tips, borderColor: '#28a745', backgroundColor: 'rgba(40, 167, 69, 0.1)', fill: true, tension: 0.4 }
+        );
     }
 
     hourlyChart = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: labels,
-            datasets: [
-                {
-                    label: 'Umsatz ($)',
-                    data: salesData,
-                    borderColor: '#0056b3',
-                    backgroundColor: 'rgba(0, 86, 179, 0.1)',
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.3
-                },
-                {
-                    label: 'Trinkgeld ($)',
-                    data: tipsData,
-                    borderColor: '#28a745',
-                    backgroundColor: 'rgba(40, 167, 69, 0.1)',
-                    borderWidth: 3,
-                    fill: true,
-                    tension: 0.3
-                }
-            ]
+            labels,
+            datasets
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
             scales: {
                 y: {
                     beginAtZero: true,
                     ticks: {
                         callback: function(value) {
-                            return value.toFixed(2) + ' $';
-                        }
-                    }
-                }
-            },
-            plugins: {
-                tooltip: {
-                    mode: 'index',
-                    intersect: false,
-                    callbacks: {
-                        label: function(context) {
-                            return context.dataset.label + ': ' + context.parsed.y.toFixed(2) + ' $';
-                        },
-                        footer: function(tooltipItems) {
-                            const index = tooltipItems[0].dataIndex;
-                            const count = countsData[index];
-                            return 'Transaktionen: ' + count;
+                            return Math.round(value) + '$';
                         }
                     }
                 }
             }
         }
     });
-}
-
-btnLogout.onclick = async () => {
-    await supabase.auth.signOut();
-    window.location.href = 'Index.html';
-};
-
-document.addEventListener('DOMContentLoaded', checkAuthAndLoad);
-
-async function loadVouchers() {
-    console.log('Lade Gutscheine...');
-    const { data: vouchers, error } = await supabase.from('vouchers').select('*').order('created_at', { ascending: false });
-
-    if (error) {
-        console.error('Fehler beim Laden der Gutscheine:', error.message);
-        vouchersBody.innerHTML = '<tr><td colspan="5">Fehler beim Laden.</td></tr>';
-        return;
-    }
-
-    vouchersBody.innerHTML = '';
-    vouchers.forEach(v => {
-        const tr = document.createElement('tr');
-        const discountStr = v.discount_type === 'percent' ? `${v.discount_value}%` : `${v.discount_value.toFixed(2)} $`;
-        const typeStr = v.is_multi_use ? '🔄 Mehrfach' : '🎫 Einmalig';
-
-        tr.innerHTML = `
-            <td>${v.code}</td>
-            <td>${discountStr}</td>
-            <td>${typeStr}</td>
-            <td>${v.times_used || 0}</td>
-            <td>
-                <button class="delete-voucher-btn" data-code="${v.code}" style="background:#dc3545; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">🗑️</button>
-            </td>
-        `;
-        vouchersBody.appendChild(tr);
-    });
-
-    // Delete Listener
-    document.querySelectorAll('.delete-voucher-btn').forEach(btn => {
-        btn.onclick = async (e) => {
-            const code = e.currentTarget.dataset.code;
-            if (confirm(`Gutschein ${code} wirklich löschen?`)) {
-                const { error } = await supabase.from('vouchers').delete().eq('code', code);
-                if (error) alert('Fehler: ' + error.message);
-                else loadVouchers();
-            }
-        };
-    });
-}
-
-if (btnCreateVoucher) {
-    btnCreateVoucher.onclick = async () => {
-        const code = document.getElementById('v-code').value.trim().toUpperCase();
-        const value = parseFloat(document.getElementById('v-discount').value);
-        const discountType = document.getElementById('v-discount-type').value;
-        const useType = document.getElementById('v-type').value;
-
-        if (!code || isNaN(value)) {
-            alert('Bitte Code und Wert eingeben!');
-            return;
-        }
-
-        const { error } = await supabase.from('vouchers').insert([
-            {
-                code: code,
-                discount_value: value,
-                discount_type: discountType,
-                is_multi_use: useType === 'multi',
-                created_at: new Date().toISOString()
-            }
-        ]);
-
-        if (error) {
-            alert('Fehler beim Erstellen: ' + error.message);
-        } else {
-            alert('Gutschein erstellt!');
-            document.getElementById('v-code').value = '';
-            document.getElementById('v-discount').value = '';
-            loadVouchers();
-        }
-    };
 }
 
 // --- PRODUKT VERWALTUNG ---
+
 async function loadProducts() {
-    console.log('Lade Produkte...');
-    const { data: products, error } = await supabase.from('products').select('*').order('category', { ascending: true });
-
-    if (error) {
-        console.error('Fehler beim Laden der Produkte:', error.message);
-        productsBody.innerHTML = '<tr><td colspan="5">Fehler beim Laden.</td></tr>';
-        return;
+    const { data: products } = await supabase.from('products').select('*').order('category');
+    if (productsBody) {
+        productsBody.innerHTML = '';
+        products.forEach(p => {
+            const tr = document.createElement('tr');
+            renderProductRowView(tr, p);
+            productsBody.appendChild(tr);
+        });
     }
-
-    if (products && products.length > 0) {
-        console.log('DEBUG: Struktur des ersten Produkts:', products[0]);
-    }
-
-    productsBody.innerHTML = '';
-    products.forEach(p => {
-        const tr = document.createElement('tr');
-        tr.dataset.id = p.id;
-        
-        // Initialer Zustand: Rein Text
-        renderProductRowView(tr, p);
-        
-        productsBody.appendChild(tr);
-    });
 }
 
 function renderProductRowView(tr, p) {
-    tr.innerHTML = `
-        <td>${p.name}</td>
-        <td>${p.category}</td>
-        <td>${p.subcategory || '-'}</td>
-        <td>${p.price.toFixed(2)} $</td>
-        <td>
-            <button class="edit-btn" style="background:#ffc107; color:black; border:none; padding:5px 10px; border-radius:4px; cursor:pointer; margin-right:5px;">✏️</button>
-            <button class="delete-btn" style="background:#dc3545; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">🗑️</button>
-        </td>
-    `;
-
+    tr.innerHTML = `<td>${p.name}</td><td>${p.category}</td><td>${p.subcategory || '-'}</td><td>${formatPrice(p.price)}</td>
+        <td><button class="edit-btn">✏️</button><button class="del-p del-btn" data-id="${p.id}">🗑️</button></td>`;
     tr.querySelector('.edit-btn').onclick = () => renderProductRowEdit(tr, p);
-    tr.querySelector('.delete-btn').onclick = async () => {
-        if (confirm('Produkt wirklich löschen?')) {
-            const { error } = await supabase.from('products').delete().eq('id', p.id);
-            if (error) alert('Fehler: ' + error.message);
-            else loadProducts();
-        }
-    };
+    tr.querySelector('.del-p').onclick = async () => { if(confirm('Löschen?')) { await supabase.from('products').delete().eq('id', p.id); loadProducts(); } };
 }
 
 function renderProductRowEdit(tr, p) {
     const cats = ['Essen', 'Trinken', 'Privat'];
     const catOptions = cats.map(c => `<option value="${c}" ${p.category === c ? 'selected' : ''}>${c}</option>`).join('');
-
-    const subcats = ['NonAlk', 'Shots', 'Cocktails', 'HartAlk'];
-    const subcatOptions = subcats.map(s => `<option value="${s}" ${p.subcategory === s ? 'selected' : ''}>${s}</option>`).join('');
-    
-    const subcatDisplay = p.category === 'Trinken' ? 'inline-block' : 'none';
-
-    tr.innerHTML = `
-        <td>
-            <input type="text" value="${p.name}" class="edit-name" style="width: 100%; padding: 5px; border: 1px solid #007bff; border-radius: 4px;">
-        </td>
-        <td>
-            <select class="edit-cat" style="padding: 5px; border: 1px solid #007bff; border-radius: 4px;">
-                ${catOptions}
-            </select>
-        </td>
-        <td>
-            <select class="edit-subcat" style="display: ${subcatDisplay}; padding: 5px; border: 1px solid #007bff; border-radius: 4px;">
-                ${subcatOptions}
-            </select>
-            <span class="subcat-dash" style="display: ${p.category !== 'Trinken' ? 'inline-block' : 'none'}; color: #999;">-</span>
-        </td>
-        <td>
-            <input type="number" step="0.10" value="${p.price}" class="edit-price" style="width: 80px; padding: 5px; border: 1px solid #007bff; border-radius: 4px;"> $
-        </td>
-        <td>
-            <button class="save-btn" style="background:#28a745; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer; margin-right:5px;">💾</button>
-            <button class="cancel-btn" style="background:#6c757d; color:white; border:none; padding:5px 10px; border-radius:4px; cursor:pointer;">❌</button>
-        </td>
-    `;
-
-    const catSelect = tr.querySelector('.edit-cat');
-    const subcatSelect = tr.querySelector('.edit-subcat');
-    const subcatDash = tr.querySelector('.subcat-dash');
-
-    catSelect.onchange = () => {
-        const isTrinken = catSelect.value === 'Trinken';
-        subcatSelect.style.display = isTrinken ? 'inline-block' : 'none';
-        subcatDash.style.display = isTrinken ? 'none' : 'inline-block';
-    };
-
+    tr.innerHTML = `<td><input type="text" value="${p.name}" class="edit-name"></td><td><select class="edit-cat">${catOptions}</select></td><td>-</td><td><input type="number" step="0.01" value="${p.price}" class="edit-price"></td>
+        <td><button class="save-btn">💾</button><button class="cancel-btn">❌</button></td>`;
     tr.querySelector('.cancel-btn').onclick = () => renderProductRowView(tr, p);
-    
     tr.querySelector('.save-btn').onclick = async () => {
-        const newName = tr.querySelector('.edit-name').value.trim();
-        const newCat = catSelect.value;
-        const newSubcat = newCat === 'Trinken' ? subcatSelect.value : null;
-        const newPrice = parseFloat(tr.querySelector('.edit-price').value);
-
-        console.log('--- UPDATE VERSUCH START ---');
-        console.log('ID:', p.id);
-        console.log('Neue Daten:', { name: newName, category: newCat, subcategory: newSubcat, price: newPrice });
-
-        if (!newName || isNaN(newPrice)) {
-            alert('Bitte gültige Daten eingeben!');
-            return;
-        }
-
-        // Wir probieren es ohne .select() am Ende, da manche RLS Policies 
-        // zwar UPDATE erlauben, aber das zurückgegebene Objekt (SELECT) blockieren.
-        const response = await supabase.from('products')
-            .update({
-                name: newName,
-                category: newCat,
-                subcategory: newSubcat,
-                price: newPrice
-            })
-            .eq('id', p.id);
-
-        console.log('Supabase Roh-Antwort:', response);
-
-        if (response.error) {
-            console.error('RLS oder DB Fehler:', response.error.message);
-            alert('Fehler beim Speichern: ' + response.error.message);
-        } else {
-            // Wenn status 204 (No Content) kommt, war es oft erfolgreich (bei update ohne select)
-            // Wenn status 200 kommt, prüfen wir ob wir Daten haben (nur mit select)
-            console.log('Update-Befehl gesendet. Status:', response.status);
-            
-            // Wir machen einen kurzen Delay und laden dann neu
-            setTimeout(() => {
-                loadProducts();
-            }, 500);
-        }
+        const name = tr.querySelector('.edit-name').value;
+        const category = tr.querySelector('.edit-cat').value;
+        const price = parseFloat(tr.querySelector('.edit-price').value);
+        await supabase.from('products').update({ name, category, price }).eq('id', p.id);
+        loadProducts();
     };
 }
 
-if (btnCreateProduct) {
-    btnCreateProduct.onclick = async () => {
-        const name = document.getElementById('p-name').value.trim();
-        const price = parseFloat(document.getElementById('p-price').value);
-        const category = document.getElementById('p-category').value;
-        const subcategory = category === 'Trinken' ? document.getElementById('p-subcategory').value : null;
-
-        console.log('DEBUG: Versuche neues Produkt zu erstellen:', { name, price, category, subcategory });
-
-        if (!name || isNaN(price)) {
-            console.warn('DEBUG: Validierung fehlgeschlagen.');
-            alert('Bitte Name und Preis eingeben!');
-            return;
-        }
-
-        const { data, error, status } = await supabase.from('products').insert([
-            {
-                name: name,
-                price: price,
-                category: category,
-                subcategory: subcategory
-            }
-        ]).select();
-
-        console.log('DEBUG: Supabase Insert Response Status:', status);
-
-        if (error) {
-            console.error('DEBUG: Fehler beim Erstellen (RLS?):', error);
-            alert('Fehler beim Erstellen: ' + error.message);
-        } else {
-            console.log('DEBUG: Produkt erfolgreich hinzugefügt. Erhaltene Daten:', data);
-            alert('Produkt hinzugefügt!');
-            resetProductForm();
-            loadProducts();
-        }
-    };
+async function handleCreateProduct() {
+    const name = document.getElementById('p-name').value;
+    const price = parseFloat(document.getElementById('p-price').value);
+    const category = document.getElementById('p-category').value;
+    const subcategory = category === 'Trinken' ? document.getElementById('p-subcategory').value : null;
+    await supabase.from('products').insert([{ name, price, category, subcategory }]);
+    loadProducts();
 }
 
-function resetProductForm() {
-    editingProductId = null;
-    document.getElementById('p-name').value = '';
-    document.getElementById('p-price').value = '';
-    document.getElementById('p-category').value = 'Essen';
-    pSubcatGroup.style.display = 'none';
-    btnCreateProduct.innerHTML = '<span class="icon">💾</span> Speichern';
-    btnCreateProduct.style.background = ''; 
-    btnCreateProduct.style.color = '';
-}
+// --- GUTSCHEIN VERWALTUNG ---
 
-// --- PRODUKT STATISTIK ---
-async function loadProductStats() {
-    console.log('Lade Produkt Verkaufsstatistiken...');
-    const { data: sales, error } = await supabase
-        .from('products_sales')
-        .select('*')
-        .order('category', { ascending: true })
-        .order('subcategory', { ascending: true })
-        .order('count', { ascending: false });
-
-    if (error) {
-        console.error('Fehler beim Laden der Produkt-Statistik:', error.message);
-        return;
+async function loadVouchers() {
+    const { data: vouchers, error } = await supabase.from('vouchers').select('*').order('created_at', { ascending: false });
+    if (vouchersBody) {
+        vouchersBody.innerHTML = '';
+        vouchers.forEach(v => {
+            const tr = document.createElement('tr');
+            renderVoucherRowView(tr, v);
+            vouchersBody.appendChild(tr);
+        });
     }
+}
 
+function renderVoucherRowView(tr, v) {
+    const isPermanent = v.type === 'multi' || v.type === true || String(v.type).toLowerCase() === 'permanent';
+    const typeStr = isPermanent ? '🔄 Permanent' : '🎫 Einmalig';
+    const expiryStr = v.expiry ? new Date(v.expiry).toLocaleDateString('de-DE') : '-';
+    if (v.expiry && new Date(v.expiry).setHours(23,59,59,999) < new Date()) tr.classList.add('expired-row');
+    else tr.classList.remove('expired-row');
+
+    tr.innerHTML = `<td>${v.code}</td><td>${v.discount}${v.discount_type === 'percent' ? '%' : '$'}</td><td>${typeStr}</td><td>${expiryStr}</td><td>${v.times_used || 0}</td>
+        <td><button class="edit-btn">✏️</button><button class="del-v del-btn" data-code="${v.code}">🗑️</button></td>`;
+    tr.querySelector('.edit-btn').onclick = () => renderVoucherRowEdit(tr, v);
+    tr.querySelector('.del-v').onclick = async () => { if(confirm('Löschen?')) { await supabase.from('vouchers').delete().eq('code', v.code); loadVouchers(); } };
+}
+
+function renderVoucherRowEdit(tr, v) {
+    const expiryVal = v.expiry ? new Date(v.expiry).toISOString().split('T')[0] : '';
+    tr.innerHTML = `<td><input type="text" value="${v.code}" class="edit-code"></td><td><input type="number" value="${v.discount}" class="edit-val"></td><td><select class="edit-type"><option value="multi" ${v.type==='multi'?'selected':''}>Permanent</option><option value="single" ${v.type!=='multi'?'selected':''}>Einmalig</option></select></td><td><input type="date" value="${expiryVal}" class="edit-expiry"></td><td>-</td>
+        <td><button class="save-btn">💾</button><button class="cancel-btn">❌</button></td>`;
+    tr.querySelector('.cancel-btn').onclick = () => renderVoucherRowView(tr, v);
+    tr.querySelector('.save-btn').onclick = async () => {
+        const code = tr.querySelector('.edit-code').value.toUpperCase();
+        const discount = parseFloat(tr.querySelector('.edit-val').value);
+        const type = tr.querySelector('.edit-type').value;
+        const expiry = tr.querySelector('.edit-expiry').value || null;
+        await supabase.from('vouchers').update({ code, discount, type, expiry }).eq('code', v.code);
+        loadVouchers();
+    };
+}
+
+async function handleCreateVoucher() {
+    const code = document.getElementById('v-code').value.toUpperCase();
+    const discount = parseFloat(document.getElementById('v-discount').value);
+    const discount_type = document.getElementById('v-discount-type').value;
+    const type = document.getElementById('v-type').value;
+    const expiry = document.getElementById('v-expiry').value || null;
+    await supabase.from('vouchers').insert([{ code, discount, discount_type, type, expiry, created_at: new Date().toISOString() }]);
+    loadVouchers();
+}
+
+// --- MITARBEITER VERWALTUNG ---
+
+async function loadAdminUsers() {
+    const { data: users } = await supabase.from('users').select('*').order('email');
+    if (usersAdminBody) {
+        usersAdminBody.innerHTML = '';
+        users.forEach(u => {
+            const tr = document.createElement('tr');
+            renderUserRowView(tr, u);
+            usersAdminBody.appendChild(tr);
+        });
+    }
+}
+
+function renderUserRowView(tr, u) {
+    tr.innerHTML = `<td>${u.email}</td><td>${u.position}</td><td>${new Date(u.created_at).toLocaleDateString()}</td>
+        <td><button class="edit-btn">✏️</button><button class="del-u del-btn" data-id="${u.id}">🗑️</button></td>`;
+    tr.querySelector('.edit-btn').onclick = () => renderUserRowEdit(tr, u);
+    tr.querySelector('.del-u').onclick = async () => { if(confirm('Löschen?')) { await supabase.from('users').delete().eq('id', u.id); loadAdminUsers(); } };
+}
+
+function renderUserRowEdit(tr, u) {
+    tr.innerHTML = `<td><input type="text" value="${u.email}" class="edit-email"></td><td><select class="edit-pos"><option value="Mitarbeiter" ${u.position==='Mitarbeiter'?'selected':''}>Mitarbeiter</option><option value="Tänzer*in" ${u.position==='Tänzer*in'?'selected':''}>Tänzer*in</option><option value="Inhaber" ${u.position==='Inhaber'?'selected':''}>Inhaber</option></select></td><td>-</td>
+        <td><button class="save-btn">💾</button><button class="cancel-btn">❌</button></td>`;
+    tr.querySelector('.cancel-btn').onclick = () => renderUserRowView(tr, u);
+    tr.querySelector('.save-btn').onclick = async () => {
+        const email = tr.querySelector('.edit-email').value;
+        const position = tr.querySelector('.edit-pos').value;
+        await supabase.from('users').update({ email, position }).eq('id', u.id);
+        loadAdminUsers();
+    };
+}
+
+async function handleCreateUser() {
+    const email = document.getElementById('u-email').value;
+    const position = document.getElementById('u-position').value;
+    await supabase.from('users').insert([{ email, position, company: currentUserProfile?.company, created_at: new Date().toISOString() }]);
+    loadAdminUsers();
+}
+
+// --- PRODUKT STATISTIK (CHARTS) ---
+
+async function loadProductStats() {
+    const { data: sales } = await supabase.from('products_sales').select('*');
     const container = document.getElementById('product-stats-container');
-    container.innerHTML = ''; // Leeren
-
-    // Alte Charts zerstören
+    if (!container) return;
+    container.innerHTML = '';
     productCharts.forEach(c => c.destroy());
     productCharts = [];
-
-    if (!sales || sales.length === 0) {
-        container.innerHTML = '<p>Keine Verkaufsdaten gefunden.</p>';
-        return;
-    }
-
-    // Gruppieren nach Kategorie
     const groups = {};
     sales.forEach(s => {
-        const cat = s.category || 'Sonstiges';
-        if (!groups[cat]) groups[cat] = [];
-        groups[cat].push(s);
+        if (activeProductCat !== 'all' && s.category !== activeProductCat) return;
+        if (!groups[s.category]) groups[s.category] = [];
+        groups[s.category].push(s);
     });
-
-    // Definierte Reihenfolge der Kategorien
-    const categoryOrder = ['Trinken', 'Essen', 'Privat', 'Sonstiges'];
-    const sortedCategories = Object.keys(groups).sort((a, b) => {
-        let indexA = categoryOrder.indexOf(a);
-        let indexB = categoryOrder.indexOf(b);
-        if (indexA === -1) indexA = 99;
-        if (indexB === -1) indexB = 99;
-        return indexA - indexB;
+    const order = ['Trinken', 'Essen', 'Privat', 'Tänzer*innen'];
+    order.forEach(cat => {
+        if (!groups[cat]) return;
+        const div = document.createElement('div');
+        div.innerHTML = `<h3>${cat}</h3><canvas id="chart-${cat}"></canvas>`;
+        container.appendChild(div);
+        const ctx = document.getElementById(`chart-${cat}`).getContext('2d');
+        productCharts.push(new Chart(ctx, { type: 'bar', data: { labels: groups[cat].map(i => i.name), datasets: [{ label: 'Sales', data: groups[cat].map(i => i.count), backgroundColor: '#0056b3' }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } } } }));
     });
-
-    // Für jede Gruppe ein Diagramm erstellen (in der sortierten Reihenfolge)
-    for (const category of sortedCategories) {
-        const items = groups[category];
-        const catDiv = document.createElement('div');
-        catDiv.className = 'category-stats-block';
-        catDiv.style.marginBottom = '40px';
-        catDiv.style.background = 'white';
-        catDiv.style.padding = '20px';
-        catDiv.style.borderRadius = '12px';
-        catDiv.style.boxShadow = '0 4px 10px rgba(0,0,0,0.05)';
-
-        const title = document.createElement('h3');
-        title.textContent = category;
-        title.style.borderBottom = '2px solid #eee';
-        title.style.paddingBottom = '10px';
-        title.style.marginBottom = '20px';
-        catDiv.appendChild(title);
-
-        const canvasWrapper = document.createElement('div');
-        // Höhe dynamisch an Anzahl der Produkte anpassen (ca. 40px pro Balken)
-        const dynamicHeight = Math.max(200, items.length * 40);
-        canvasWrapper.style.position = 'relative';
-        canvasWrapper.style.height = `${dynamicHeight}px`;
-        
-        const canvas = document.createElement('canvas');
-        canvasWrapper.appendChild(canvas);
-        catDiv.appendChild(canvasWrapper);
-        container.appendChild(catDiv);
-
-        renderCategoryChart(canvas, items, category);
-    }
 }
 
-function renderCategoryChart(canvas, items, category) {
-    const labels = items.map(s => s.subcategory ? `[${s.subcategory}] ${s.name}` : s.name);
-    const data = items.map(s => s.count);
-    
-    let color = '#6c757d';
-    if (category === 'Essen') color = '#0056b3';
-    if (category === 'Trinken') color = '#28a745';
-
-    const newChart = new Chart(canvas.getContext('2d'), {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Verkaufte Anzahl',
-                data: data,
-                backgroundColor: color,
-                borderColor: color,
-                borderWidth: 1
-            }]
-        },
-        options: {
-            indexAxis: 'y',
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: {
-                    beginAtZero: true,
-                    ticks: { stepSize: 1 }
-                }
-            },
-            plugins: {
-                legend: { display: false }
-            }
-        }
-    });
-    productCharts.push(newChart);
-}
-
+document.addEventListener('DOMContentLoaded', init);
