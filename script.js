@@ -25,6 +25,19 @@ function showStatus(div, html, duration = 4000) {
     }, duration);
     statusTimeouts.set(div, timeout);
 }
+const buttonFeedbackTimeouts = new Map();
+function flashButtonFeedback(button, state, duration = 1000) {
+    if (!button) return;
+    button.classList.remove('btn-feedback-success', 'btn-feedback-error');
+    button.classList.add(state === 'success' ? 'btn-feedback-success' : 'btn-feedback-error');
+
+    if (buttonFeedbackTimeouts.has(button)) clearTimeout(buttonFeedbackTimeouts.get(button));
+    const timeout = setTimeout(() => {
+        button.classList.remove('btn-feedback-success', 'btn-feedback-error');
+        buttonFeedbackTimeouts.delete(button);
+    }, duration);
+    buttonFeedbackTimeouts.set(button, timeout);
+}
 let selectedPrivatProduct = null; // Trackt das aktuell gewählte Privat-Produkt
 
 // DOM Elemente
@@ -434,7 +447,7 @@ async function checkout() {
     console.log('Starte Kassiervorgang...');
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-        showStatus(checkoutStatusDiv, `<span class="status-error">Nicht angemeldet.</span>`);
+        flashButtonFeedback(btnCheckout, 'error');
         return;
     }
 
@@ -444,7 +457,7 @@ async function checkout() {
 
     if (!transactionUserId) {
         console.error('Konnte kein Profil in der Tabelle "users" für diesen Account finden!');
-        showStatus(checkoutStatusDiv, `<span class="status-error">Benutzerkonto nicht korrekt hinterlegt. Bitte Admin kontaktieren.</span>`);
+        flashButtonFeedback(btnCheckout, 'error');
         return;
     }
 
@@ -459,7 +472,7 @@ async function checkout() {
 
     const company = currentUserProfile?.company;
     if (!company) {
-        showStatus(checkoutStatusDiv, `<span class="status-error">Deinem Konto ist keine Firma zugewiesen.</span>`);
+        flashButtonFeedback(btnCheckout, 'error');
         return;
     }
     const transactionData = {
@@ -478,7 +491,7 @@ async function checkout() {
 
     if (error) { 
         console.error('Supabase Transaction Error:', error);
-        showStatus(checkoutStatusDiv, `<span class="status-error">Fehler beim Speichern: ${error.message}</span>`);
+        flashButtonFeedback(btnCheckout, 'error');
         return; 
     }
 
@@ -570,7 +583,7 @@ async function checkout() {
         await supabase.from('vouchers').delete().eq('code', appliedVoucher.code).eq('company', company);
     }
     
-    showStatus(checkoutStatusDiv, `<span class="status-success">Kassiervorgang erfolgreich abgeschlossen!</span>`);
+    flashButtonFeedback(btnCheckout, 'success');
     cart = []; appliedVoucher = null; tipInput.value = ''; voucherCodeInput.value = ''; 
     // paymentMethod bleibt erhalten (wird nicht zurückgesetzt)
     updateCart();
