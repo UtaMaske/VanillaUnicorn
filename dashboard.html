@@ -119,6 +119,7 @@
                     <button class="prod-cat-btn active" data-cat="Trinken">Trinken</button>
                     <button class="prod-cat-btn" data-cat="Essen">Essen</button>
                     <button class="prod-cat-btn" data-cat="Privat">Privat</button>
+                    <button class="prod-cat-btn" data-cat="Tür">Tür</button>
                     <button class="prod-cat-btn" data-cat="Tänzer*innen">Tänzer*innen</button>
                 </div>
             </div>
@@ -131,12 +132,14 @@
                 <div class="voucher-form-grid">
                     <div class="form-group"><label>Name</label><input type="text" id="p-name"></div>
                     <div class="form-group"><label>Preis ($)</label><input type="number" id="p-price" step="0.10"></div>
+                    <div class="form-group"><label>EK ($)</label><input type="number" id="p-ek" step="0.10" placeholder="optional"></div>
                     <div class="form-group">
                         <label>Kategorie</label>
                         <select id="p-category">
                             <option value="Essen">Essen</option>
                             <option value="Trinken">Trinken</option>
                             <option value="Privat">Privat</option>
+                            <option value="Tür">Tür</option>
                         </select>
                     </div>
                     <div id="p-subcat-group" class="form-group" style="display: none;">
@@ -155,7 +158,7 @@
             </div>
             <div class="table-wrapper">
                 <table id="products-table">
-                    <thead><tr><th>Name</th><th>Kategorie</th><th>Unterkategorie</th><th>Preis ($)</th><th>Aktion</th></tr></thead>
+                    <thead><tr><th>Name</th><th>Kategorie</th><th>Unterkategorie</th><th>Preis ($)</th><th>EK ($)</th><th>Gewinn ($)</th><th>Aktion</th></tr></thead>
                     <tbody id="products-body"></tbody>
                 </table>
             </div>
@@ -210,6 +213,7 @@
                         <select id="u-position">
                             <option value="Mitarbeiter">Mitarbeiter</option>
                             <option value="Tänzer*in">Tänzer*in</option>
+                            <option value="Türsteher*in">Türsteher*in</option>
                             <option value="Inhaber">Inhaber</option>
                         </select>
                     </div>
