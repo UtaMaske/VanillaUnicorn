@@ -53,10 +53,114 @@ function shortenEmail(email) {
     }).join(' ');
 }
 
+function isOwnerPosition(position) {
+    return String(position || '').trim().toLowerCase() === 'inhaber';
+}
+
+function isDoorStaffPosition(position) {
+    return String(position || '').trim().toLowerCase() === 'türsteher*in';
+}
+
+function getAllowedProductStatsCategories(profile) {
+    if (isDoorStaffPosition(profile?.position)) return ['Tür'];
+    if (isOwnerPosition(profile?.position)) return ['Trinken', 'Essen', 'Privat', 'Tür', 'Tänzer*innen'];
+    return ['Trinken', 'Essen', 'Privat', 'Tänzer*innen'];
+}
+
+function applyProductStatsRoleVisibility(profile) {
+    const allowedCategories = new Set(getAllowedProductStatsCategories(profile));
+    const isDoorStaff = isDoorStaffPosition(profile?.position);
+    const isOwner = isOwnerPosition(profile?.position);
+    const buttons = Array.from(document.querySelectorAll('.prod-cat-btn'));
+
+    buttons.forEach(btn => {
+        const cat = btn.dataset.cat;
+        const isVisible = cat === 'all' ? !isDoorStaff : allowedCategories.has(cat);
+        btn.style.display = isVisible ? '' : 'none';
+        if (!isVisible) btn.classList.remove('active');
+    });
+
+    let fallbackCategory = activeProductCat;
+    if (isOwner) fallbackCategory = 'all';
+    if (fallbackCategory !== 'all' && !allowedCategories.has(fallbackCategory)) {
+        fallbackCategory = allowedCategories.has('Trinken') ? 'Trinken' : (Array.from(allowedCategories)[0] || 'all');
+    }
+    if (fallbackCategory === 'all' && isDoorStaff) {
+        fallbackCategory = 'Tür';
+    }
+
+    const activeButton = buttons.find(btn => btn.dataset.cat === fallbackCategory && btn.style.display !== 'none');
+    if (activeButton) {
+        buttons.forEach(btn => btn.classList.remove('active'));
+        activeButton.classList.add('active');
+        activeProductCat = fallbackCategory;
+    }
+}
+
 function getBusinessDate(dateInput) {
     const d = new Date(dateInput);
     if (d.getHours() < 6) d.setDate(d.getDate() - 1);
     return d.toLocaleDateString('de-DE');
+}
+
+function applyDashboardRoleVisibility(profile) {
+    const isOwner = isOwnerPosition(profile?.position);
+    const ownerTabIds = ['tab-produkte', 'tab-vouchers', 'tab-users-admin'];
+
+    ownerTabIds.forEach(tabId => {
+        const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
+        if (tabBtn) tabBtn.style.display = isOwner ? '' : 'none';
+        const tabContent = document.getElementById(tabId);
+        if (tabContent) tabContent.style.display = isOwner ? '' : 'none';
+    });
+
+    if (!isOwner) {
+        const activeBtn = document.querySelector('.tab-btn.active');
+        if (activeBtn && ownerTabIds.includes(activeBtn.dataset.tab)) {
+            tabBtns.forEach(b => b.classList.remove('active'));
+            tabContents.forEach(c => c.classList.remove('active'));
+            const defaultBtn = document.querySelector('.tab-btn[data-tab="tab-statistik"]');
+            const defaultTab = document.getElementById('tab-statistik');
+            if (defaultBtn) defaultBtn.classList.add('active');
+            if (defaultTab) defaultTab.classList.add('active');
+        }
+    }
+
+    applyProductStatsRoleVisibility(profile);
+}
+
+async function ensureDancerProduct(userId, email, company) {
+    const { error } = await supabase.from('products').upsert([
+        {
+            id: userId,
+            name: shortenEmail(email),
+            category: 'Tänzer*innen',
+            subcategory: null,
+            price: 0,
+            company: company || null
+        }
+    ], { onConflict: 'id' });
+
+    if (error) {
+        console.error('Fehler beim Anlegen in products für Tänzer*in:', error);
+        return false;
+    }
+
+    return true;
+}
+
+function toIsoDateString(dateValue) {
+    if (!dateValue || dateValue === 'Gesamt') return null;
+    if (dateValue === 'today') return new Date().toISOString().split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return dateValue;
+
+    const parts = dateValue.split('.').map(p => p.trim()).filter(Boolean);
+    if (parts.length !== 3) return dateValue;
+
+    const day = parts[0].padStart(2, '0');
+    const month = parts[1].padStart(2, '0');
+    const year = parts[2];
+    return `${year}-${month}-${day}`;
 }
 
 // --- INITIALISIERUNG ---
@@ -70,16 +174,11 @@ function init() {
             btn.classList.add('active');
             const target = document.getElementById(btn.dataset.tab);
             if (target) target.classList.add('active');
-            if (btn.dataset.tab === 'tab-prod-stats') loadProductStats();
+            if (btn.dataset.tab === 'tab-prod-stats') loadProductStats(statsDateInput ? statsDateInput.value : 'Gesamt');
         };
     });
 
-    // Kategorie-Umschaltung für Produkt-Erstellung
-    if (pCategorySelect) {
-        pCategorySelect.onchange = () => {
-            pSubcatGroup.style.display = pCategorySelect.value === 'Trinken' ? 'block' : 'none';
-        };
-    }
+    // Produkt-Statistik Datum-Filter entfernt - verwendet jetzt das gleiche wie Live-Statistik
 
     // View Toggle Logik für Live Statistik
     const btnViewChart = document.getElementById('btn-view-chart');
@@ -122,7 +221,7 @@ function init() {
             document.querySelectorAll('.prod-cat-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             activeProductCat = btn.dataset.cat;
-            loadProductStats();
+            loadProductStats(statsDateInput ? statsDateInput.value : 'Gesamt');
         };
     });
 
@@ -151,6 +250,7 @@ function init() {
             statsDateInput.value = newDate;
             lastSelectedDate = newDate; // Neues Datum speichern
             loadStats(currentUserProfile, newDate);
+            loadProductStats(newDate);
         };
         
         document.getElementById('btn-next-day').onclick = () => {
@@ -172,6 +272,7 @@ function init() {
             statsDateInput.value = newDate;
             lastSelectedDate = newDate; // Neues Datum speichern
             loadStats(currentUserProfile, newDate);
+            loadProductStats(newDate);
         };
         
         document.getElementById('btn-all-days').onclick = () => {
@@ -181,6 +282,7 @@ function init() {
             }
             statsDateInput.value = 'Gesamt';
             loadStats(currentUserProfile, 'all');
+            loadProductStats('Gesamt');
         };
     }
 
@@ -197,15 +299,21 @@ async function checkAuthAndLoad() {
     if (!session) { window.location.href = 'Index.html'; return; }
 
     const user = session.user;
-    if (userDisplay) userDisplay.textContent = user.email;
+    if (userDisplay) userDisplay.textContent = shortenEmail(user.email);
     
     const { data: profile } = await supabase.from('users').select('*').eq('auth_user_id', user.id).single();
     if (!profile) { window.location.href = 'Index.html'; return; }
+    if (!profile.company) {
+        console.error('Profil ohne company, Zugriff verweigert:', profile.id);
+        window.location.href = 'Index.html';
+        return;
+    }
 
     currentUserProfile = profile;
+    applyDashboardRoleVisibility(profile);
     loadStats(profile);
     
-    if (profile.position === 'Inhaber') {
+    if (isOwnerPosition(profile.position)) {
         loadVouchers();
         loadProducts();
         loadAdminUsers();
@@ -215,9 +323,12 @@ async function checkAuthAndLoad() {
 // --- LIVE STATISTIK LADEN ---
 
 async function loadStats(currentUserProfile, targetDate = null) {
-    const isOwner = currentUserProfile.position === 'Inhaber';
-    const { data: profiles } = await supabase.from('users').select('*');
-    const { data: allTransactions, error } = await supabase.from('transactions').select('*').order('created_at', { ascending: false });
+    const company = currentUserProfile?.company;
+    if (!company) return;
+    const isOwner = isOwnerPosition(currentUserProfile.position);
+    const { data: profiles } = await supabase.from('users').select('*').eq('company', company);
+    let transactionsQuery = supabase.from('transactions').select('*').eq('company', company).order('created_at', { ascending: false });
+    const { data: allTransactions, error } = await transactionsQuery;
 
     if (error) return;
 
@@ -307,22 +418,20 @@ async function loadStats(currentUserProfile, targetDate = null) {
         });
     }
 
-    if (isOwner) {
-        let chartData;
-        if (today === 'Gesamt') {
-            // Bei Gesamt-Ansicht: Berechne Durchschnitt und Maximum pro 10-Minuten-Intervall
-            chartData = calculateAverageMaxStats(dailyHourlyStats);
-        } else {
-            // Bei Tages-Ansicht: Normale stündliche Daten
-            const sortedHours = Object.keys(hourlyStats).sort();
-            chartData = {
-                labels: sortedHours,
-                sales: sortedHours.map(h => hourlyStats[h].sales),
-                tips: sortedHours.map(h => hourlyStats[h].tips)
-            };
-        }
-        renderChart(chartData.labels, chartData.sales, chartData.tips, chartData.avgSales, chartData.maxSales, chartData.avgTips, chartData.maxTips, today === 'Gesamt');
+    let chartData;
+    if (today === 'Gesamt') {
+        // Bei Gesamt-Ansicht: Berechne Durchschnitt und Maximum pro 10-Minuten-Intervall
+        chartData = calculateAverageMaxStats(dailyHourlyStats);
+    } else {
+        // Bei Tages-Ansicht: Normale stündliche Daten
+        const sortedHours = Object.keys(hourlyStats).sort();
+        chartData = {
+            labels: sortedHours,
+            sales: sortedHours.map(h => hourlyStats[h].sales),
+            tips: sortedHours.map(h => hourlyStats[h].tips)
+        };
     }
+    renderChart(chartData.labels, chartData.sales, chartData.tips, chartData.avgSales, chartData.maxSales, chartData.avgTips, chartData.maxTips, today === 'Gesamt');
 }
 
 function calculateAverageMaxStats(dailyHourlyStats) {
@@ -466,7 +575,11 @@ function renderChart(labels, sales, tips, avgSales = null, maxSales = null, avgT
 // --- PRODUKT VERWALTUNG ---
 
 async function loadProducts() {
-    const { data: products } = await supabase.from('products').select('*').order('category');
+    const company = currentUserProfile?.company;
+    if (!company) return;
+    let query = supabase.from('products').select('*').eq('company', company).order('category');
+    const { data: products } = await query;
+
     if (productsBody) {
         productsBody.innerHTML = '';
         products.forEach(p => {
@@ -478,23 +591,62 @@ async function loadProducts() {
 }
 
 function renderProductRowView(tr, p) {
-    tr.innerHTML = `<td>${p.name}</td><td>${p.category}</td><td>${p.subcategory || '-'}</td><td>${formatPrice(p.price)}</td>
+    const price = Number(p.price) || 0;
+    const storedEk = p.ek ?? p.EK; // handle both lowercase and uppercase column names
+    const ekRaw = (storedEk !== undefined && storedEk !== null && storedEk !== '') ? Number(storedEk) : null;
+    const profit = ekRaw !== null ? price - ekRaw : 0;
+
+    tr.innerHTML = `<td>${p.name}</td><td>${p.category}</td><td>${p.subcategory || '-'}</td><td>${formatPrice(price)}</td><td>${ekRaw !== null ? formatPrice(ekRaw) : '-'}</td><td>${formatPrice(profit)}</td>
         <td><button class="edit-btn">✏️</button><button class="del-p del-btn" data-id="${p.id}">🗑️</button></td>`;
     tr.querySelector('.edit-btn').onclick = () => renderProductRowEdit(tr, p);
-    tr.querySelector('.del-p').onclick = async () => { if(confirm('Löschen?')) { await supabase.from('products').delete().eq('id', p.id); loadProducts(); } };
+    tr.querySelector('.del-p').onclick = async () => {
+        if (!confirm('Löschen?')) return;
+        const company = currentUserProfile?.company;
+        let query = supabase.from('products').delete().eq('id', p.id);
+        if (company) query = query.eq('company', company);
+        await query;
+        loadProducts();
+    };
 }
 
 function renderProductRowEdit(tr, p) {
-    const cats = ['Essen', 'Trinken', 'Privat'];
+    const cats = ['Essen', 'Trinken', 'Privat', 'Tür'];
     const catOptions = cats.map(c => `<option value="${c}" ${p.category === c ? 'selected' : ''}>${c}</option>`).join('');
-    tr.innerHTML = `<td><input type="text" value="${p.name}" class="edit-name"></td><td><select class="edit-cat">${catOptions}</select></td><td>-</td><td><input type="number" step="0.01" value="${p.price}" class="edit-price"></td>
+    const price = Number(p.price) || 0;
+    const storedEk = p.ek ?? p.EK; // handle both lowercase and uppercase column names
+    const ek = (storedEk !== undefined && storedEk !== null && storedEk !== '') ? Number(storedEk) : '';
+
+    tr.innerHTML = `<td><input type="text" value="${p.name}" class="edit-name"></td><td><select class="edit-cat">${catOptions}</select></td><td>-</td><td><input type="number" step="0.01" value="${price}" class="edit-price"></td><td><input type="number" step="0.01" value="${ek}" class="edit-ek" placeholder="(optional)"></td><td>-</td>
         <td><button class="save-btn">💾</button><button class="cancel-btn">❌</button></td>`;
     tr.querySelector('.cancel-btn').onclick = () => renderProductRowView(tr, p);
     tr.querySelector('.save-btn').onclick = async () => {
         const name = tr.querySelector('.edit-name').value;
         const category = tr.querySelector('.edit-cat').value;
-        const price = parseFloat(tr.querySelector('.edit-price').value);
-        await supabase.from('products').update({ name, category, price }).eq('id', p.id);
+        let price = parseFloat(tr.querySelector('.edit-price').value);
+        if (!Number.isFinite(price)) price = 0;
+
+        const ekInput = tr.querySelector('.edit-ek').value;
+        const ekParsed = parseFloat(ekInput);
+        const ek = ekInput.trim() === '' ? null : (Number.isFinite(ekParsed) ? ekParsed : null);
+
+        const updateData = { name, category, price, EK: ek };
+
+        try {
+            const company = currentUserProfile?.company;
+            let query = supabase.from('products').update(updateData).eq('id', p.id);
+            if (company) query = query.eq('company', company);
+            const { error } = await query;
+            if (error) {
+                console.error('Product update failed', error);
+                alert('Fehler beim Speichern: ' + (error.message || error));
+                return;
+            }
+        } catch (err) {
+            console.error('Unexpected error while updating product', err);
+            alert('Unerwarteter Fehler beim Speichern');
+            return;
+        }
+
         loadProducts();
     };
 }
@@ -502,16 +654,33 @@ function renderProductRowEdit(tr, p) {
 async function handleCreateProduct() {
     const name = document.getElementById('p-name').value;
     const price = parseFloat(document.getElementById('p-price').value);
+
+    const ekValue = document.getElementById('p-ek').value;
+    const ekParsed = parseFloat(ekValue);
+    const ek = ekValue.trim() === '' ? null : (Number.isFinite(ekParsed) ? ekParsed : null);
+
     const category = document.getElementById('p-category').value;
     const subcategory = category === 'Trinken' ? document.getElementById('p-subcategory').value : null;
-    await supabase.from('products').insert([{ name, price, category, subcategory }]);
+
+    const insertData = { name, price, category, subcategory, company: currentUserProfile?.company || null };
+    if (ek !== null) insertData.EK = ek; // match schema column name
+
+    const { error } = await supabase.from('products').insert([insertData]);
+    if (error) {
+        console.error('Product create failed', error);
+        alert('Fehler beim Erstellen: ' + (error.message || error));
+        return;
+    }
     loadProducts();
 }
 
 // --- GUTSCHEIN VERWALTUNG ---
 
 async function loadVouchers() {
-    const { data: vouchers, error } = await supabase.from('vouchers').select('*').order('created_at', { ascending: false });
+    const company = currentUserProfile?.company;
+    if (!company) return;
+    let query = supabase.from('vouchers').select('*').eq('company', company).order('created_at', { ascending: false });
+    const { data: vouchers, error } = await query;
     if (vouchersBody) {
         vouchersBody.innerHTML = '';
         vouchers.forEach(v => {
@@ -532,7 +701,14 @@ function renderVoucherRowView(tr, v) {
     tr.innerHTML = `<td>${v.code}</td><td>${v.discount}${v.discount_type === 'percent' ? '%' : '$'}</td><td>${typeStr}</td><td>${expiryStr}</td><td>${v.times_used || 0}</td>
         <td><button class="edit-btn">✏️</button><button class="del-v del-btn" data-code="${v.code}">🗑️</button></td>`;
     tr.querySelector('.edit-btn').onclick = () => renderVoucherRowEdit(tr, v);
-    tr.querySelector('.del-v').onclick = async () => { if(confirm('Löschen?')) { await supabase.from('vouchers').delete().eq('code', v.code); loadVouchers(); } };
+    tr.querySelector('.del-v').onclick = async () => {
+        if (!confirm('Löschen?')) return;
+        const company = currentUserProfile?.company;
+        let query = supabase.from('vouchers').delete().eq('code', v.code);
+        if (company) query = query.eq('company', company);
+        await query;
+        loadVouchers();
+    };
 }
 
 function renderVoucherRowEdit(tr, v) {
@@ -545,7 +721,10 @@ function renderVoucherRowEdit(tr, v) {
         const discount = parseFloat(tr.querySelector('.edit-val').value);
         const type = tr.querySelector('.edit-type').value;
         const expiry = tr.querySelector('.edit-expiry').value || null;
-        await supabase.from('vouchers').update({ code, discount, type, expiry }).eq('code', v.code);
+        const company = currentUserProfile?.company;
+        let query = supabase.from('vouchers').update({ code, discount, type, expiry }).eq('code', v.code);
+        if (company) query = query.eq('company', company);
+        await query;
         loadVouchers();
     };
 }
@@ -556,14 +735,19 @@ async function handleCreateVoucher() {
     const discount_type = document.getElementById('v-discount-type').value;
     const type = document.getElementById('v-type').value;
     const expiry = document.getElementById('v-expiry').value || null;
-    await supabase.from('vouchers').insert([{ code, discount, discount_type, type, expiry, created_at: new Date().toISOString() }]);
+    const company = currentUserProfile?.company;
+    if (!company) return;
+    await supabase.from('vouchers').insert([{ code, discount, discount_type, type, expiry, company, created_at: new Date().toISOString() }]);
     loadVouchers();
 }
 
 // --- MITARBEITER VERWALTUNG ---
 
 async function loadAdminUsers() {
-    const { data: users } = await supabase.from('users').select('*').order('email');
+    const company = currentUserProfile?.company;
+    if (!company) return;
+    let query = supabase.from('users').select('*').eq('company', company).order('email');
+    const { data: users } = await query;
     if (usersAdminBody) {
         usersAdminBody.innerHTML = '';
         users.forEach(u => {
@@ -578,17 +762,39 @@ function renderUserRowView(tr, u) {
     tr.innerHTML = `<td>${u.email}</td><td>${u.position}</td><td>${new Date(u.created_at).toLocaleDateString()}</td>
         <td><button class="edit-btn">✏️</button><button class="del-u del-btn" data-id="${u.id}">🗑️</button></td>`;
     tr.querySelector('.edit-btn').onclick = () => renderUserRowEdit(tr, u);
-    tr.querySelector('.del-u').onclick = async () => { if(confirm('Löschen?')) { await supabase.from('users').delete().eq('id', u.id); loadAdminUsers(); } };
+    tr.querySelector('.del-u').onclick = async () => {
+        if (!confirm('Löschen?')) return;
+        const company = currentUserProfile?.company;
+        let query = supabase.from('users').delete().eq('id', u.id);
+        if (company) query = query.eq('company', company);
+        await query;
+        loadAdminUsers();
+    };
 }
 
 function renderUserRowEdit(tr, u) {
-    tr.innerHTML = `<td><input type="text" value="${u.email}" class="edit-email"></td><td><select class="edit-pos"><option value="Mitarbeiter" ${u.position==='Mitarbeiter'?'selected':''}>Mitarbeiter</option><option value="Tänzer*in" ${u.position==='Tänzer*in'?'selected':''}>Tänzer*in</option><option value="Inhaber" ${u.position==='Inhaber'?'selected':''}>Inhaber</option></select></td><td>-</td>
+    tr.innerHTML = `<td><input type="text" value="${u.email}" class="edit-email"></td><td><select class="edit-pos"><option value="Mitarbeiter" ${u.position==='Mitarbeiter'?'selected':''}>Mitarbeiter</option><option value="Tänzer*in" ${u.position==='Tänzer*in'?'selected':''}>Tänzer*in</option><option value="Türsteher*in" ${u.position==='Türsteher*in'?'selected':''}>Türsteher*in</option><option value="Inhaber" ${u.position==='Inhaber'?'selected':''}>Inhaber</option></select></td><td>-</td>
         <td><button class="save-btn">💾</button><button class="cancel-btn">❌</button></td>`;
     tr.querySelector('.cancel-btn').onclick = () => renderUserRowView(tr, u);
     tr.querySelector('.save-btn').onclick = async () => {
         const email = tr.querySelector('.edit-email').value;
         const position = tr.querySelector('.edit-pos').value;
-        await supabase.from('users').update({ email, position }).eq('id', u.id);
+        const company = currentUserProfile?.company;
+        let query = supabase.from('users').update({ email, position }).eq('id', u.id);
+        if (company) query = query.eq('company', company);
+        const { error } = await query;
+
+        if (error) {
+            console.error('Fehler beim Aktualisieren des Nutzers:', error);
+            loadAdminUsers();
+            return;
+        }
+
+        if (position === 'Tänzer*in') {
+            await ensureDancerProduct(u.id, email, company);
+            loadProducts();
+        }
+
         loadAdminUsers();
     };
 }
@@ -596,33 +802,84 @@ function renderUserRowEdit(tr, u) {
 async function handleCreateUser() {
     const email = document.getElementById('u-email').value;
     const position = document.getElementById('u-position').value;
-    await supabase.from('users').insert([{ email, position, company: currentUserProfile?.company, created_at: new Date().toISOString() }]);
+    const company = currentUserProfile?.company;
+    if (!company) return;
+
+    const { data: newUser, error } = await supabase
+        .from('users')
+        .insert([{ email, position, company, created_at: new Date().toISOString() }])
+        .select('id,email')
+        .single();
+
+    if (error) {
+        console.error('Fehler beim Anlegen des Nutzers:', error);
+        loadAdminUsers();
+        return;
+    }
+
+    if (position === 'Tänzer*in') {
+        await ensureDancerProduct(newUser.id, newUser.email, company);
+        loadProducts();
+    }
+
     loadAdminUsers();
 }
 
 // --- PRODUKT STATISTIK (CHARTS) ---
 
-async function loadProductStats() {
-    const { data: sales } = await supabase.from('products_sales').select('*');
+async function loadProductStats(selectedDate = null) {
+    const company = currentUserProfile?.company;
+    if (!company) return;
+    const allowedCategories = new Set(getAllowedProductStatsCategories(currentUserProfile));
+
+    if (activeProductCat !== 'all' && !allowedCategories.has(activeProductCat)) {
+        activeProductCat = allowedCategories.has('Trinken') ? 'Trinken' : (Array.from(allowedCategories)[0] || 'all');
+    }
+
+    let productsQuery = supabase.from('products').select('id,name,category,subcategory').eq('company', company);
+    const { data: products } = await productsQuery;
+
+    let query = supabase.from('products_sales').select('*').eq('company', company);
+    const selectedIsoDate = toIsoDateString(selectedDate);
+    if (selectedIsoDate) query = query.eq('date', selectedIsoDate);
+    const { data: sales } = await query;
+
     const container = document.getElementById('product-stats-container');
     if (!container) return;
     container.innerHTML = '';
     productCharts.forEach(c => c.destroy());
     productCharts = [];
-    const groups = {};
-    sales.forEach(s => {
-        if (activeProductCat !== 'all' && s.category !== activeProductCat) return;
-        if (!groups[s.category]) groups[s.category] = [];
-        groups[s.category].push(s);
+
+    const salesRows = sales || [];
+    const productsList = products || [];
+    const countByProductId = {};
+
+    salesRows.forEach(row => {
+        if (!row?.product_id) return;
+        countByProductId[row.product_id] = (countByProductId[row.product_id] || 0) + (Number(row.count) || 0);
     });
-    const order = ['Trinken', 'Essen', 'Privat', 'Tänzer*innen'];
+
+    const groups = {};
+    productsList.forEach(product => {
+        if (!allowedCategories.has(product.category)) return;
+        if (activeProductCat !== 'all' && product.category !== activeProductCat) return;
+        if (!groups[product.category]) groups[product.category] = [];
+        groups[product.category].push({
+            name: product.name,
+            count: countByProductId[product.id] || 0
+        });
+    });
+
+    const order = ['Trinken', 'Essen', 'Privat', 'Tür', 'Tänzer*innen'];
     order.forEach(cat => {
         if (!groups[cat]) return;
         const div = document.createElement('div');
         div.innerHTML = `<h3>${cat}</h3><canvas id="chart-${cat}"></canvas>`;
         container.appendChild(div);
         const ctx = document.getElementById(`chart-${cat}`).getContext('2d');
-        productCharts.push(new Chart(ctx, { type: 'bar', data: { labels: groups[cat].map(i => i.name), datasets: [{ label: 'Sales', data: groups[cat].map(i => i.count), backgroundColor: '#0056b3' }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } } } }));
+        const labels = groups[cat].map(i => i.name);
+        const counts = groups[cat].map(i => Number(i.count) || 0);
+        productCharts.push(new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ label: 'Sales', data: counts, backgroundColor: '#0056b3' }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } } } }));
     });
 }
 
