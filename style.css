@@ -262,13 +262,13 @@ input[type=number] {
 
 .save-voucher-btn {
     padding: 12px 20px;
-    background: #28a745;
+    background: #0056b3;
     color: white;
     border: none;
     border-radius: 8px;
     font-weight: bold;
     cursor: pointer;
-    transition: background 0.2s, transform 0.1s;
+    transition: background-color 0.3s ease, transform 0.1s ease;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -277,7 +277,7 @@ input[type=number] {
 }
 
 .save-voucher-btn:hover {
-    background: #218838;
+    background: #004494;
 }
 
 .save-voucher-btn:active {
@@ -840,7 +840,7 @@ h1 {
 #btn-checkout {
     width: 100%;
     padding: 15px;
-    background: #28a745;
+    background: #0056b3;
     color: white;
     border: none;
     border-radius: 12px;
@@ -848,10 +848,21 @@ h1 {
     font-weight: bold;
     cursor: pointer;
     margin-top: 15px;
+    transition: background-color 0.3sease, transform 0.1s ease;
 }
 
 #btn-checkout:hover {
-    background: #218838;
+    background: #004494;
+}
+
+.save-voucher-btn.btn-feedback-success,
+#btn-checkout.btn-feedback-success {
+    background: #28a745 !important;
+}
+
+.save-voucher-btn.btn-feedback-error,
+#btn-checkout.btn-feedback-error {
+    background: #dc3545 !important;
 }
 
 .chart-container{
