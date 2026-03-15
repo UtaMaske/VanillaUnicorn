@@ -12,6 +12,19 @@ let tipMode = 'total';
 let appliedVoucher = null;
 let currentUserProfile = null; 
 let paymentMethod = 'Bar'; // Standardmäßig Barzahlung
+
+// Status timers to auto-clear messages
+const statusTimeouts = new Map();
+function showStatus(div, html, duration = 4000) {
+    if (!div) return;
+    div.innerHTML = html;
+    if (statusTimeouts.has(div)) clearTimeout(statusTimeouts.get(div));
+    const timeout = setTimeout(() => {
+        if (div) div.innerHTML = '';
+        statusTimeouts.delete(div);
+    }, duration);
+    statusTimeouts.set(div, timeout);
+}
 let selectedPrivatProduct = null; // Trackt das aktuell gewählte Privat-Produkt
 
 // DOM Elemente
@@ -36,6 +49,7 @@ const trinkenCocktailsDiv = document.getElementById('trinken-cocktails');
 const trinkenHartalkDiv = document.getElementById('trinken-hartalk');
 const trinkenNonalkDiv = document.getElementById('trinken-nonalk');
 const privatProdukteDiv = document.getElementById('privat-produkte');
+const tuerProdukteDiv = document.getElementById('tuer-produkte');
 const cartItemsUl = document.getElementById('cart-items');
 const totalSpan = document.getElementById('total');
 const tipInput = document.getElementById('tip-input');
@@ -45,6 +59,7 @@ const btnTipTotal = document.getElementById('btn-tip-total');
 const voucherCodeInput = document.getElementById('voucher-code');
 const btnApplyVoucher = document.getElementById('btn-apply-voucher');
 const voucherStatusDiv = document.getElementById('voucher-status');
+const checkoutStatusDiv = document.getElementById('checkout-status');
 const btnCheckout = document.getElementById('btn-checkout');
 const btnPayCash = document.getElementById('btn-pay-cash');
 const btnPayCard = document.getElementById('btn-pay-card');
@@ -76,7 +91,7 @@ async function updateUI(user) {
     if (user) {
         loginContainer.style.display = 'none';
         appContainer.style.display = 'block';
-        userDisplay.textContent = user.email;
+        userDisplay.textContent = shortenEmail(user.email);
 
         try {
             console.log('Lade Rolle aus Tabelle "users" für auth_user_id:', user.id);
@@ -86,18 +101,29 @@ async function updateUI(user) {
                 console.warn('Kein Profil gefunden:', pError?.message);
                 currentUserProfile = null;
                 userRole.textContent = 'Mitarbeiter';
-                navDashboard.style.display = 'block';
+                navDashboard.style.display = 'none';
+                products = [];
+                renderProducts();
+                showStatus(checkoutStatusDiv, `<span class="status-error">Kein Benutzerprofil gefunden. Bitte Admin kontaktieren.</span>`);
             } else {
                 console.log('Profil geladen:', profile);
                 currentUserProfile = profile;
                 userRole.textContent = profile.position || 'Mitarbeiter';
                 navDashboard.style.display = 'block';
+
+                if (!profile.company) {
+                    console.error('Benutzerprofil ohne company:', profile.id);
+                    products = [];
+                    renderProducts();
+                    showStatus(checkoutStatusDiv, `<span class="status-error">Deinem Konto ist keine Firma zugewiesen.</span>`);
+                    return;
+                }
             }
         } catch (e) {
             console.error('Fehler beim UI-Update:', e);
             currentUserProfile = null;
         }
-        fetchProducts();
+        if (currentUserProfile?.company) fetchProducts();
     } else {
         loginContainer.style.display = 'flex';
         appContainer.style.display = 'none';
@@ -109,13 +135,28 @@ async function updateUI(user) {
 
 // --- APP LOGIK ---
 async function fetchProducts() {
-    const { data, error } = await supabase.from('products').select('*').order('price', { ascending: true });
+    const company = currentUserProfile?.company;
+    const isDoorStaff = currentUserProfile?.position === 'Türsteher*in';
+    const isOwner = currentUserProfile?.position === 'Inhaber';
+    if (!company) {
+        products = [];
+        renderProducts();
+        return;
+    }
+    let query = supabase.from('products').select('*').order('price', { ascending: true });
+    query = query.eq('company', company);
+    if (isDoorStaff) query = query.eq('category', 'Tür');
+    else if (!isOwner) query = query.neq('category', 'Tür');
+    const { data, error } = await query;
     if (error) { console.error('Produkte laden fehlgeschlagen:', error); return; }
     products = data || [];
     renderProducts();
 }
 
 function renderProducts() {
+    const isDoorStaff = currentUserProfile?.position === 'Türsteher*in';
+    const isOwner = currentUserProfile?.position === 'Inhaber';
+
     // Clear all lists
     essenProdukteDiv.innerHTML = '';
     trinkenShotsDiv.innerHTML = '';
@@ -123,8 +164,13 @@ function renderProducts() {
     trinkenHartalkDiv.innerHTML = '';
     trinkenNonalkDiv.innerHTML = '';
     privatProdukteDiv.innerHTML = '';
+    if (tuerProdukteDiv) tuerProdukteDiv.innerHTML = '';
 
     products.forEach(p => {
+        if (p.category === 'Tänzer*innen') return;
+        if (isDoorStaff && p.category !== 'Tür') return;
+        if (!isDoorStaff && !isOwner && p.category === 'Tür') return;
+
         const div = document.createElement('div');
         div.className = 'produkt-item';
         div.innerHTML = `<span>${p.name}</span><span>${Math.round(p.price)} $</span>`;
@@ -147,11 +193,47 @@ function renderProducts() {
                 // Fallback: If no subcategory, put in NonAlk or handle differently
                 trinkenNonalkDiv.appendChild(div);
             }
-        } else {
+        } else if (p.category === 'Privat') {
             privatProdukteDiv.appendChild(div);
+        } else if (p.category === 'Tür' && tuerProdukteDiv) {
+            tuerProdukteDiv.appendChild(div);
         }
     });
+
+    // Hide categories/subcategories that have no products
+    const essenSection = document.getElementById('essen-kategorie');
+    if (essenSection) essenSection.style.display = essenProdukteDiv.children.length ? '' : 'none';
+
+    const trinkenSection = document.getElementById('trinken-kategorie');
+    const shotsBlock = trinkenShotsDiv.closest('.subkategorie-block');
+    const cocktailsBlock = trinkenCocktailsDiv.closest('.subkategorie-block');
+    const hartalkBlock = trinkenHartalkDiv.closest('.subkategorie-block');
+    const nonalkBlock = trinkenNonalkDiv.closest('.subkategorie-block');
+
+    if (shotsBlock) shotsBlock.style.display = trinkenShotsDiv.children.length ? '' : 'none';
+    if (cocktailsBlock) cocktailsBlock.style.display = trinkenCocktailsDiv.children.length ? '' : 'none';
+    if (hartalkBlock) hartalkBlock.style.display = trinkenHartalkDiv.children.length ? '' : 'none';
+    if (nonalkBlock) nonalkBlock.style.display = trinkenNonalkDiv.children.length ? '' : 'none';
+
+    if (trinkenSection) {
+        const hasAnyTrinken = [trinkenShotsDiv, trinkenCocktailsDiv, trinkenHartalkDiv, trinkenNonalkDiv].some(div => div.children.length);
+        trinkenSection.style.display = hasAnyTrinken ? '' : 'none';
+    }
+
+    const privatSection = document.getElementById('privat-kategorie');
+    if (privatSection) privatSection.style.display = privatProdukteDiv.children.length ? '' : 'none';
+
+    const tuerSection = document.getElementById('tuer-kategorie');
+    if (tuerSection) tuerSection.style.display = tuerProdukteDiv && tuerProdukteDiv.children.length ? '' : 'none';
+
+    if (isDoorStaff) {
+        if (essenSection) essenSection.style.display = 'none';
+        if (trinkenSection) trinkenSection.style.display = 'none';
+        if (privatSection) privatSection.style.display = 'none';
+        if (tuerSection) tuerSection.style.display = '';
+    }
 }
+
 
 function addToCart(p) {
     // Suche nach exakt diesem Produkt im Warenkorb (Name muss auch übereinstimmen wegen Privat-Auswahl)
@@ -175,11 +257,15 @@ function shortenEmail(email) {
 }
 
 async function fetchEmployees() {
-    const { data, error } = await supabase
+    const company = currentUserProfile?.company;
+    if (!company) return [];
+    let query = supabase
         .from('users')
         .select('*')
         .eq('position', 'Tänzer*in')
+        .eq('company', company)
         .order('email', { ascending: true });
+    const { data, error } = await query;
     if (error) { console.error('Mitarbeiter laden fehlgeschlagen:', error); return []; }
     return data || [];
 }
@@ -212,7 +298,7 @@ function selectEmployee(emp) {
         ...selectedPrivatProduct,
         name: `${selectedPrivatProduct.name} (${displayName})`,
         bookedEmployeeId: emp.id,
-        bookedEmployeeName: displayName // Speichern für products_sales
+        bookedEmployeeName: displayName
     };
     
     addToCart(productWithEmp);
@@ -293,14 +379,21 @@ function applyQuickTip(percent) {
 }
 
 async function applyVoucher() {
+    checkoutStatusDiv.innerHTML = '';
     const code = voucherCodeInput.value.trim().toUpperCase();
+    const company = currentUserProfile?.company;
     if (!code) { appliedVoucher = null; updateTotalsOnly(); return; }
+    if (!company) {
+        appliedVoucher = null;
+        showStatus(voucherStatusDiv, `<span class="voucher-error">Keine Firma</span>`);
+        return;
+    }
     
-    const { data: voucher, error } = await supabase.from('vouchers').select('*').eq('code', code).single();
+    const { data: voucher, error } = await supabase.from('vouchers').select('*').eq('code', code).eq('company', company).single();
     
     if (error || !voucher) {
         appliedVoucher = null;
-        voucherStatusDiv.innerHTML = `<span class="voucher-error">Ungültig</span>`;
+        showStatus(voucherStatusDiv, `<span class="voucher-error">Ungültig</span>`);
         updateTotalsOnly();
         return;
     }
@@ -313,8 +406,8 @@ async function applyVoucher() {
         
         if (expiryDate < today) {
             appliedVoucher = null;
-            voucherStatusDiv.innerHTML = `<span class="voucher-error">Abgelaufen</span>`;
-            alert('Dieser Gutschein ist am ' + expiryDate.toLocaleDateString('de-DE') + ' abgelaufen.');
+            showStatus(voucherStatusDiv, `<span class="voucher-error">Abgelaufen</span>`);
+            showStatus(checkoutStatusDiv, `<span class="status-error">Gutschein abgelaufen (${expiryDate.toLocaleDateString('de-DE')}).</span>`);
             updateTotalsOnly();
             return;
         }
@@ -323,8 +416,8 @@ async function applyVoucher() {
     // --- Prüfung ob Einmal-Gutschein schon genutzt (falls nicht gelöscht) ---
     if (voucher.type === 'single' && (voucher.times_used || 0) > 0) {
         appliedVoucher = null;
-        voucherStatusDiv.innerHTML = `<span class="voucher-error">Bereits genutzt</span>`;
-        alert('Dieser Einmal-Gutschein wurde bereits eingelöst.');
+        showStatus(voucherStatusDiv, `<span class="voucher-error">Bereits genutzt</span>`);
+        showStatus(checkoutStatusDiv, `<span class="status-error">Einmal-Gutschein wurde bereits verwendet.</span>`);
         updateTotalsOnly();
         return;
     }
@@ -336,11 +429,12 @@ async function applyVoucher() {
 
 async function checkout() {
     if (cart.length === 0) return;
+    checkoutStatusDiv.innerHTML = '';
     
     console.log('Starte Kassiervorgang...');
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-        alert('Nicht angemeldet!');
+        showStatus(checkoutStatusDiv, `<span class="status-error">Nicht angemeldet.</span>`);
         return;
     }
 
@@ -350,7 +444,7 @@ async function checkout() {
 
     if (!transactionUserId) {
         console.error('Konnte kein Profil in der Tabelle "users" für diesen Account finden!');
-        alert('Fehler: Dein Benutzerkonto ist nicht korrekt in der "users"-Tabelle hinterlegt. Bitte kontaktiere den Admin.');
+        showStatus(checkoutStatusDiv, `<span class="status-error">Benutzerkonto nicht korrekt hinterlegt. Bitte Admin kontaktieren.</span>`);
         return;
     }
 
@@ -363,8 +457,14 @@ async function checkout() {
     }
     const finalSub = Math.max(0, subtotal - disc);
 
+    const company = currentUserProfile?.company;
+    if (!company) {
+        showStatus(checkoutStatusDiv, `<span class="status-error">Deinem Konto ist keine Firma zugewiesen.</span>`);
+        return;
+    }
     const transactionData = {
         user_id: transactionUserId, // Nutzt die interne ID (z.B. add6651e...)
+        company,
         subtotal: finalSub,
         tip_amount: tipAmount,
         total_amount: finalSub + tipAmount,
@@ -378,70 +478,99 @@ async function checkout() {
 
     if (error) { 
         console.error('Supabase Transaction Error:', error);
-        alert(`Fehler beim Speichern: ${error.message}`); 
+        showStatus(checkoutStatusDiv, `<span class="status-error">Fehler beim Speichern: ${error.message}</span>`);
         return; 
     }
 
-    // --- NEU: Verkaufszahlen in products_sales aktualisieren ---
+    // --- NEU: Verkaufszahlen in products_sales aktualisieren (täglich) ---
+    const today = new Date().toISOString().split('T')[0];
     for (const item of cart) {
         // 1. Zuerst das Produkt selbst aktualisieren (oder anlegen)
+        const matchCriteria = { product_id: item.id, company, date: today };
         const { data: existingEntry } = await supabase
             .from('products_sales')
             .select('count')
-            .eq('id', item.id)
+            .match(matchCriteria)
             .single();
 
         if (existingEntry) {
+            const existingCount = Number(existingEntry.count) || 0;
             await supabase
                 .from('products_sales')
-                .update({ count: (existingEntry.count || 0) + item.quantity })
-                .eq('id', item.id);
+                .update({ count: existingCount + item.quantity })
+                .match(matchCriteria);
         } else {
             await supabase
                 .from('products_sales')
                 .insert([{
-                    id: item.id,
+                    product_id: item.id,
                     name: item.name,
                     category: item.category,
                     subcategory: item.subcategory,
-                    count: item.quantity
+                    count: item.quantity,
+                    company,
+                    date: today
                 }]);
         }
 
         // 2. WENN Kategorie "Privat": Statistik für die Person (Mitarbeiter) erfassen
         if (item.category === 'Privat' && item.bookedEmployeeId) {
-            const { data: existingEmpEntry } = await supabase
-                .from('products_sales')
-                .select('count')
-                .eq('id', item.bookedEmployeeId)
+            const dancerProductMatch = { id: item.bookedEmployeeId, company };
+            const { data: existingDancerProduct } = await supabase
+                .from('products')
+                .select('id')
+                .match(dancerProductMatch)
                 .single();
 
-            if (existingEmpEntry) {
-                // Wenn Person schon drin: Count erhöhen
+            if (!existingDancerProduct) {
                 await supabase
-                    .from('products_sales')
-                    .update({ count: (existingEmpEntry.count || 0) + item.quantity })
-                    .eq('id', item.bookedEmployeeId);
-            } else {
-                // Wenn Person noch nicht drin: Neu anlegen (Kategorie "Tänzer*in", Subcategory null)
-                await supabase
-                    .from('products_sales')
+                    .from('products')
                     .insert([{
                         id: item.bookedEmployeeId,
                         name: item.bookedEmployeeName,
                         category: 'Tänzer*innen',
                         subcategory: null,
-                        count: item.quantity
+                        price: 0,
+                        company
+                    }]);
+            }
+
+            const matchCriteria = { product_id: item.bookedEmployeeId, company, date: today };
+            const { data: existingEmpEntry } = await supabase
+                .from('products_sales')
+                .select('count')
+                .match(matchCriteria)
+                .single();
+
+            if (existingEmpEntry) {
+                // Wenn Person schon drin: Count erhöhen
+                const existingCount = Number(existingEmpEntry.count) || 0;
+                await supabase
+                    .from('products_sales')
+                    .update({ count: existingCount + item.quantity })
+                    .match(matchCriteria);
+            } else {
+                // Wenn Person noch nicht drin: Neu anlegen (Kategorie "Tänzer*in", Subcategory null)
+                await supabase
+                    .from('products_sales')
+                    .insert([{
+                        product_id: item.bookedEmployeeId,
+                        name: item.bookedEmployeeName,
+                        category: 'Tänzer*innen',
+                        subcategory: null,
+                        count: item.quantity,
+                        company,
+                        date: today
                     }]);
             }
         }
     }
     
     if (appliedVoucher?.type === 'single') {
-        await supabase.from('vouchers').delete().eq('code', appliedVoucher.code);
+        await supabase.from('vouchers').delete().eq('code', appliedVoucher.code).eq('company', company);
     }
     
-    alert('Kassiervorgang erfolgreich abgeschlossen!');
+    showStatus(checkoutStatusDiv, `<span class="status-success">Kassiervorgang erfolgreich abgeschlossen!</span>`);
     cart = []; appliedVoucher = null; tipInput.value = ''; voucherCodeInput.value = ''; 
     // paymentMethod bleibt erhalten (wird nicht zurückgesetzt)
     updateCart();
