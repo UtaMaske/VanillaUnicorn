@@ -149,6 +149,9 @@ input[type=number] {
     cursor: pointer;
     transition: all 0.2s;
 }
+.tab-btn:hover {
+    background: #c5dffa;
+}
 
 .tab-btn.active {
     background: #0056b3;
