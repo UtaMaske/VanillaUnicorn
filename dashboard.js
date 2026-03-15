@@ -36,12 +36,26 @@ let productCharts = [];
 let activeProductCat = 'Trinken'; 
 let currentUserProfile = null; 
 let lastSelectedDate = null; // Speichert das letzte ausgewählte Datum 
+const buttonFeedbackTimeouts = new Map();
 
 // --- HILFSFUNKTIONEN ---
 function formatPrice(val) {
     const num = parseFloat(val) || 0;
     // Immer ohne Nachkommastellen anzeigen
     return Math.round(num) + '$';
+}
+
+function flashButtonFeedback(button, state, duration = 1000) {
+    if (!button) return;
+    button.classList.remove('btn-feedback-success', 'btn-feedback-error');
+    button.classList.add(state === 'success' ? 'btn-feedback-success' : 'btn-feedback-error');
+
+    if (buttonFeedbackTimeouts.has(button)) clearTimeout(buttonFeedbackTimeouts.get(button));
+    const timeout = setTimeout(() => {
+        button.classList.remove('btn-feedback-success', 'btn-feedback-error');
+        buttonFeedbackTimeouts.delete(button);
+    }, duration);
+    buttonFeedbackTimeouts.set(button, timeout);
 }
 
 function shortenEmail(email) {
@@ -652,6 +666,7 @@ function renderProductRowEdit(tr, p) {
 }
 
 async function handleCreateProduct() {
+    const saveButton = btnCreateProduct;
     const name = document.getElementById('p-name').value;
     const price = parseFloat(document.getElementById('p-price').value);
 
@@ -668,9 +683,10 @@ async function handleCreateProduct() {
     const { error } = await supabase.from('products').insert([insertData]);
     if (error) {
         console.error('Product create failed', error);
-        alert('Fehler beim Erstellen: ' + (error.message || error));
+        flashButtonFeedback(saveButton, 'error');
         return;
     }
+    flashButtonFeedback(saveButton, 'success');
     loadProducts();
 }
 
@@ -730,14 +746,24 @@ function renderVoucherRowEdit(tr, v) {
 }
 
 async function handleCreateVoucher() {
+    const saveButton = btnCreateVoucher;
     const code = document.getElementById('v-code').value.toUpperCase();
     const discount = parseFloat(document.getElementById('v-discount').value);
     const discount_type = document.getElementById('v-discount-type').value;
     const type = document.getElementById('v-type').value;
     const expiry = document.getElementById('v-expiry').value || null;
     const company = currentUserProfile?.company;
-    if (!company) return;
-    await supabase.from('vouchers').insert([{ code, discount, discount_type, type, expiry, company, created_at: new Date().toISOString() }]);
+    if (!company) {
+        flashButtonFeedback(saveButton, 'error');
+        return;
+    }
+    const { error } = await supabase.from('vouchers').insert([{ code, discount, discount_type, type, expiry, company, created_at: new Date().toISOString() }]);
+    if (error) {
+        console.error('Voucher create failed', error);
+        flashButtonFeedback(saveButton, 'error');
+        return;
+    }
+    flashButtonFeedback(saveButton, 'success');
     loadVouchers();
 }
 
@@ -800,10 +826,14 @@ function renderUserRowEdit(tr, u) {
 }
 
 async function handleCreateUser() {
+    const saveButton = btnCreateUser;
     const email = document.getElementById('u-email').value;
     const position = document.getElementById('u-position').value;
     const company = currentUserProfile?.company;
-    if (!company) return;
+    if (!company) {
+        flashButtonFeedback(saveButton, 'error');
+        return;
+    }
 
     const { data: newUser, error } = await supabase
         .from('users')
@@ -813,6 +843,7 @@ async function handleCreateUser() {
 
     if (error) {
         console.error('Fehler beim Anlegen des Nutzers:', error);
+        flashButtonFeedback(saveButton, 'error');
         loadAdminUsers();
         return;
     }
@@ -821,6 +852,8 @@ async function handleCreateUser() {
         await ensureDancerProduct(newUser.id, newUser.email, company);
         loadProducts();
     }
+
+    flashButtonFeedback(saveButton, 'success');
 
     loadAdminUsers();
 }
