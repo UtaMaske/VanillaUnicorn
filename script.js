@@ -582,6 +582,32 @@ async function checkout() {
                     }]);
             }
         }
+
+        // 3. Wenn Produkt zu Essen oder Trinken gehört, Lagerbestand reduzieren
+        try {
+            if (['Essen', 'Trinken'].includes(item.category)) {
+                const { data: storageRow, error: storageErr } = await supabase
+                    .from('storage')
+                    .select('count,id')
+                    .eq('company', company)
+                    .eq('name', item.name)
+                    .maybeSingle();
+
+                if (storageErr) {
+                    console.error('Fehler beim Lesen des Lager-Eintrags:', storageErr);
+                } else if (!storageRow) {
+                    console.warn('Kein Lager-Eintrag gefunden für Produkt', item.name);
+                } else {
+                    const existingCount = Number(storageRow.count) || 0;
+                    const newCount = Math.max(0, existingCount - item.quantity);
+                    const { error: updateErr } = await supabase.from('storage').update({ count: newCount }).eq('id', storageRow.id).eq('company', company);
+                    if (updateErr) console.error('Fehler beim Aktualisieren des Lager-Eintrags:', updateErr);
+                    else console.log(`Lager aktualisiert für ${item.name}: ${existingCount} -> ${newCount}`);
+                }
+            }
+        } catch (e) {
+            console.error('Unerwarteter Fehler beim Reduzieren des Lagerbestands:', e);
+        }
     }
     
     if (appliedVoucher?.type === 'single') {
