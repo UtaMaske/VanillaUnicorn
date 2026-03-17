@@ -324,6 +324,11 @@ async function checkAuthAndLoad() {
     }
 
     currentUserProfile = profile;
+    // show/hide storage nav button based on owner role
+    try {
+        const navStorageBtn = document.getElementById('nav-storage');
+        if (navStorageBtn) navStorageBtn.style.display = isOwnerPosition(profile.position) ? '' : 'none';
+    } catch (e) { console.warn('[dashboard] could not set nav-storage visibility', e); }
     applyDashboardRoleVisibility(profile);
     loadStats(profile);
     

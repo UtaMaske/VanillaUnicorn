@@ -124,7 +124,9 @@ async function updateUI(user) {
                 currentUserProfile = profile;
                 userRole.textContent = profile.position || 'Mitarbeiter';
                 navDashboard.style.display = 'block';
-                if (navStorage) navStorage.style.display = 'block';
+                // show storage nav only to Inhaber
+                const isOwner = String(profile.position || '').trim().toLowerCase() === 'inhaber';
+                if (navStorage) navStorage.style.display = isOwner ? 'block' : 'none';
 
                 if (!profile.company) {
                     console.error('Benutzerprofil ohne company:', profile.id);
