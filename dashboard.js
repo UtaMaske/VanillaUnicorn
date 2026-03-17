@@ -619,6 +619,14 @@ function renderProductRowView(tr, p) {
         let query = supabase.from('products').delete().eq('id', p.id);
         if (company) query = query.eq('company', company);
         await query;
+        // Also remove any matching storage rows for this product name/company
+        try {
+            if (company) {
+                const { error: sErr } = await supabase.from('storage').delete().eq('name', p.name).eq('company', company);
+                if (sErr) console.warn('Error deleting storage rows for product', p.name, sErr);
+                else console.log('Deleted storage rows for product', p.name);
+            }
+        } catch (e) { console.error('Unexpected error deleting storage rows', e); }
         loadProducts();
     };
 }
@@ -647,14 +655,28 @@ function renderProductRowEdit(tr, p) {
 
         try {
             const company = currentUserProfile?.company;
-            let query = supabase.from('products').update(updateData).eq('id', p.id);
-            if (company) query = query.eq('company', company);
-            const { error } = await query;
+            let query = supabase.from('products').update(updateData).eq('id', p.id).select().maybeSingle();
+            if (company) query = supabase.from('products').update(updateData).eq('id', p.id).eq('company', company).select().maybeSingle();
+            const { data: prodUpdated, error } = await query;
             if (error) {
                 console.error('Product update failed', error);
                 alert('Fehler beim Speichern: ' + (error.message || error));
                 return;
             }
+
+            console.log('Product updated result:', prodUpdated);
+
+            // If the product belongs to Essen or Trinken, update storage rows that reference the old product name
+            try {
+                if (company && ['Essen', 'Trinken'].includes(category)) {
+                    const newSubcat = category === 'Trinken' ? (p.subcategory || '') : null;
+                    const storageUpdate = { name, category, subcategory: newSubcat };
+                    const { error: sErr } = await supabase.from('storage').update(storageUpdate).eq('name', p.name).eq('company', company);
+                    if (sErr) console.warn('Could not update storage rows for product edit', sErr);
+                    else console.log('Updated storage rows for product edit', storageUpdate);
+                }
+            } catch (se) { console.error('Unexpected error updating storage rows:', se); }
+
         } catch (err) {
             console.error('Unexpected error while updating product', err);
             alert('Unerwarteter Fehler beim Speichern');
@@ -687,6 +709,17 @@ async function handleCreateProduct() {
         return;
     }
     flashButtonFeedback(saveButton, 'success');
+    // If product is in Essen or Trinken, also create a storage entry with count=0
+    try {
+        if (['Essen', 'Trinken'].includes(category) && currentUserProfile?.company) {
+            const storageInsert = { name, category, subcategory, count: 0, company: currentUserProfile.company, created_at: new Date().toISOString() };
+            const { error: sErr } = await supabase.from('storage').insert([storageInsert]);
+            if (sErr) console.warn('Could not create storage entry for product:', sErr);
+            else console.log('Created storage entry for product', storageInsert);
+        }
+    } catch (e) {
+        console.error('Unexpected error creating storage entry:', e);
+    }
     loadProducts();
 }
 
@@ -771,9 +804,15 @@ async function handleCreateVoucher() {
 
 async function loadAdminUsers() {
     const company = currentUserProfile?.company;
-    if (!company) return;
+    console.log('[dashboard] loadAdminUsers currentUserProfile=', currentUserProfile);
+    if (!company) {
+        console.warn('[dashboard] loadAdminUsers: no company for current profile');
+        return;
+    }
     let query = supabase.from('users').select('*').eq('company', company).order('email');
-    const { data: users } = await query;
+    console.log('[dashboard] loadAdminUsers query company=', company);
+    const { data: users, error: usersError } = await query;
+    if (usersError) console.error('[dashboard] loadAdminUsers fetch error', usersError);
     if (usersAdminBody) {
         usersAdminBody.innerHTML = '';
         users.forEach(u => {
@@ -785,15 +824,18 @@ async function loadAdminUsers() {
 }
 
 function renderUserRowView(tr, u) {
+    console.log('[dashboard] renderUserRowView user=', u);
     tr.innerHTML = `<td>${u.email}</td><td>${u.position}</td><td>${new Date(u.created_at).toLocaleDateString()}</td>
         <td><button class="edit-btn">✏️</button><button class="del-u del-btn" data-id="${u.id}">🗑️</button></td>`;
-    tr.querySelector('.edit-btn').onclick = () => renderUserRowEdit(tr, u);
+    tr.querySelector('.edit-btn').onclick = () => { console.log('[dashboard] edit button clicked for user', u.id); renderUserRowEdit(tr, u); };
     tr.querySelector('.del-u').onclick = async () => {
+        console.log('[dashboard] delete button clicked for user', u.id);
         if (!confirm('Löschen?')) return;
         const company = currentUserProfile?.company;
         let query = supabase.from('users').delete().eq('id', u.id);
         if (company) query = query.eq('company', company);
-        await query;
+        const { error } = await query;
+        if (error) console.error('[dashboard] delete user error', error);
         loadAdminUsers();
     };
 }
@@ -806,12 +848,51 @@ function renderUserRowEdit(tr, u) {
         const email = tr.querySelector('.edit-email').value;
         const position = tr.querySelector('.edit-pos').value;
         const company = currentUserProfile?.company;
-        let query = supabase.from('users').update({ email, position }).eq('id', u.id);
-        if (company) query = query.eq('company', company);
-        const { error } = await query;
+        console.log('[dashboard] updating user', { id: u.id, email, position, company });
 
-        if (error) {
-            console.error('Fehler beim Aktualisieren des Nutzers:', error);
+        try {
+            // fetch current target user record before update
+            const { data: beforeData, error: beforeErr } = await supabase.from('users').select('*').eq('id', u.id).maybeSingle();
+            if (beforeErr) console.error('[dashboard] error fetching user before update', beforeErr);
+            console.log('[dashboard] before update record:', beforeData);
+
+            // perform update and request returning row
+            let updateQuery = supabase.from('users').update({ email, position }).eq('id', u.id).select().maybeSingle();
+            if (company) updateQuery = supabase.from('users').update({ email, position }).eq('id', u.id).eq('company', company).select().maybeSingle();
+            const { data: updateData, error } = await updateQuery;
+            if (error) {
+                console.error('Fehler beim Aktualisieren des Nutzers:', error);
+                loadAdminUsers();
+                return;
+            }
+            console.log('[dashboard] update result', updateData);
+
+            // fetch after update to verify
+            const { data: afterData, error: afterErr } = await supabase.from('users').select('*').eq('id', u.id).maybeSingle();
+            if (afterErr) console.error('[dashboard] error fetching user after update', afterErr);
+            console.log('[dashboard] after update record:', afterData);
+
+            // If updateData is null or unchanged, attempt fallback (only for debugging)
+            if ((!updateData) || (beforeData && afterData && beforeData.position === afterData.position && beforeData.email === afterData.email)) {
+                console.warn('[dashboard] update did not change record using company filter, attempting fallback update without company filter');
+                try {
+                    const { data: fallbackData, error: fallbackErr } = await supabase.from('users').update({ email, position }).eq('id', u.id).select().maybeSingle();
+                    if (fallbackErr) {
+                        console.error('[dashboard] fallback update error', fallbackErr);
+                    } else {
+                        console.log('[dashboard] fallback update result', fallbackData);
+                        const { data: afterFallback, error: afterFbErr } = await supabase.from('users').select('*').eq('id', u.id).maybeSingle();
+                        if (afterFbErr) console.error('[dashboard] error fetching after fallback', afterFbErr);
+                        console.log('[dashboard] after fallback record:', afterFallback);
+                        alert('Update wurde mit Fallback durchgeführt (Company-Feld passte nicht).');
+                    }
+                } catch (ex) {
+                    console.error('[dashboard] fallback update exception', ex);
+                }
+            }
+
+        } catch (err) {
+            console.error('[dashboard] unexpected error during user update flow', err);
             loadAdminUsers();
             return;
         }

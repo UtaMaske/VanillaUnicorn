@@ -51,6 +51,7 @@ const loginError = document.getElementById('login-error');
 const userDisplay = document.getElementById('user-display');
 const userRole = document.getElementById('user-role');
 const navDashboard = document.getElementById('nav-dashboard');
+const navStorage = document.getElementById('nav-storage');
 
 const employeeModal = document.getElementById('employee-modal');
 const employeeListDiv = document.getElementById('employee-list');
@@ -123,6 +124,7 @@ async function updateUI(user) {
                 currentUserProfile = profile;
                 userRole.textContent = profile.position || 'Mitarbeiter';
                 navDashboard.style.display = 'block';
+                if (navStorage) navStorage.style.display = 'block';
 
                 if (!profile.company) {
                     console.error('Benutzerprofil ohne company:', profile.id);
@@ -143,6 +145,7 @@ async function updateUI(user) {
         userDisplay.textContent = '';
         userRole.textContent = '';
         currentUserProfile = null;
+            if (navStorage) navStorage.style.display = 'none';
     }
 }
 
