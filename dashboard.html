@@ -14,6 +14,7 @@
             <button onclick="window.location.href='Index.html'" class="nav-btn">Kasse</button>
             <button onclick="window.location.href='dashboard.html'" class="nav-btn active">📊 Dashboard</button>
             <button id="nav-storage" class="nav-btn" onclick="window.location.href='storage.html'">📦 Lager</button>
+            <button id="nav-company-settings" class="nav-btn" style="display: none;" onclick="window.location.href='company-settings.html'">🏢 Unternehmen</button>
         </nav>
         <div class="user-info">
             <span id="user-display">Lade...</span>
@@ -40,13 +41,21 @@
                 <h3>Umsatz Heute</h3>
                 <p id="total-sales-all">0.00 $</p>
             </div>
-            <div class="stat-card">
+            <div id="card-total-tips" class="stat-card">
                 <h3>Trinkgeld Heute</h3>
                 <p id="total-tips-all">0.00 $</p>
             </div>
-            <div class="stat-card highlight-card">
-                <h3 id="label-boss-cash">Abgabe an Chef</h3>
-                <p id="total-boss-cash">0.00 $</p>
+            <div id="card-tip-pool" class="stat-card">
+                <h3>Tip-Pool</h3>
+                <p id="total-tip-pool">0.00 $</p>
+            </div>
+            <div id="card-staff-tip-share" class="stat-card">
+                <h3>Mitarbeiteranteil</h3>
+                <p id="total-staff-tip-share">0.00 $</p>
+            </div>
+            <div id="card-boss-tip-share" class="stat-card highlight-card">
+                <h3 id="label-boss-tip-share">Chefanteil</h3>
+                <p id="total-boss-tip-share">0.00 $</p>
             </div>
         </div>
 
@@ -56,6 +65,7 @@
                 <!-- Statistik Buttons (Links) -->
                 <button class="tab-btn active" data-tab="tab-statistik">Live Statistik</button>
                 <button class="tab-btn" data-tab="tab-prod-stats">Kauf Statistik</button>
+                <button class="tab-btn" data-tab="tab-tip-payouts">Trinkgeld</button>
             </div>
             <div class="nav-spacer"></div> <!-- Schiebt den Rest nach rechts -->
             
@@ -63,7 +73,6 @@
              <div>
                 <button class="tab-btn" data-tab="tab-produkte">Produkte</button>
                 <button class="tab-btn" data-tab="tab-vouchers">Gutscheine</button>
-                <button class="tab-btn" data-tab="tab-users-admin">Mitarbeiter</button>
             </div>
         </div>
 
@@ -125,6 +134,25 @@
                 </div>
             </div>
             <div id="product-stats-container"></div>
+        </div>
+
+        <div id="tab-tip-payouts" class="tab-content">
+            <h2>Trinkgeld je Mitarbeiter</h2>
+            <p class="settings-subtitle">Zeigt den Trinkgeld-Anteil pro Mitarbeiter und den Auszahlungsstatus.</p>
+            <div class="table-wrapper">
+                <table id="tip-payouts-table">
+                    <thead>
+                        <tr>
+                            <th>Mitarbeiter</th>
+                            <th>Position</th>
+                            <th>Trinkgeld ($)</th>
+                            <th>Status</th>
+                            <th>Aktion</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tip-payouts-body"></tbody>
+                </table>
+            </div>
         </div>
 
         <div id="tab-produkte" class="tab-content">
@@ -204,32 +232,6 @@
             </div>
         </div>
 
-        <div id="tab-users-admin" class="tab-content">
-            <h2>Mitarbeiter-Zugänge verwalten</h2>
-            <div class="voucher-creator-card">
-                <div class="voucher-form-grid">
-                    <div class="form-group"><label>E-Mail / Kennung</label><input type="text" id="u-email"></div>
-                    <div class="form-group">
-                        <label>Position</label>
-                        <select id="u-position">
-                            <option value="Mitarbeiter">Mitarbeiter</option>
-                            <option value="Tänzer*in">Tänzer*in</option>
-                            <option value="Türsteher*in">Türsteher*in</option>
-                            <option value="Inhaber">Inhaber</option>
-                        </select>
-                    </div>
-                    <div class="form-group btn-align-bottom">
-                        <button id="btn-create-user" class="save-voucher-btn">➕ Mitarbeiter anlegen</button>
-                    </div>
-                </div>
-            </div>
-            <div class="table-wrapper">
-                <table id="users-admin-table">
-                    <thead><tr><th>E-Mail</th><th>Position</th><th>Registriert am</th><th>Aktion</th></tr></thead>
-                    <tbody id="users-admin-body"></tbody>
-                </table>
-            </div>
-        </div>
     </div>
 
     <script src="dashboard.js" type="module"></script>

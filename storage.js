@@ -5,11 +5,17 @@ const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const userDisplay = document.getElementById('user-display');
+const userRole = document.getElementById('user-role');
 const btnLogout = document.getElementById('btn-logout');
 const storageBody = document.getElementById('storage-body');
+const navCompanySettings = document.getElementById('nav-company-settings');
 // note: creation of new storage items moved out of this tab
 
 let currentProfile = null;
+
+function isOwnerPosition(position) {
+    return String(position || '').trim().toLowerCase() === 'inhaber';
+}
 
 async function init() {
     console.log('[storage] init() starting');
@@ -25,6 +31,15 @@ async function init() {
     if (!profile) { console.warn('[storage] no profile found, redirecting'); window.location.href = 'Index.html'; return; }
     currentProfile = profile;
     console.log('[storage] loaded profile:', currentProfile);
+    if (userRole) userRole.textContent = currentProfile.position || 'Mitarbeiter';
+
+    const isOwner = isOwnerPosition(currentProfile.position);
+    if (navCompanySettings) navCompanySettings.style.display = isOwner ? '' : 'none';
+    if (userRole) {
+        userRole.style.cursor = isOwner ? 'pointer' : 'default';
+        userRole.title = isOwner ? 'Unternehmens-Einstellungen öffnen' : '';
+        userRole.onclick = isOwner ? () => { window.location.href = 'company-settings.html'; } : null;
+    }
 
     if (btnLogout) btnLogout.onclick = async () => { await supabase.auth.signOut(); window.location.href = 'Index.html'; };
 

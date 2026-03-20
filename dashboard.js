@@ -9,8 +9,16 @@ const userDisplay = document.getElementById('user-display');
 const btnLogout = document.getElementById('btn-logout');
 const totalSalesAll = document.getElementById('total-sales-all');
 const totalTipsAll = document.getElementById('total-tips-all');
-const totalBossCash = document.getElementById('total-boss-cash');
-const labelBossCash = document.getElementById('label-boss-cash');
+const totalTipPool = document.getElementById('total-tip-pool');
+const totalStaffTipShare = document.getElementById('total-staff-tip-share');
+const totalBossTipShare = document.getElementById('total-boss-tip-share');
+const labelBossTipShare = document.getElementById('label-boss-tip-share');
+const cardTotalTips = document.getElementById('card-total-tips');
+const cardTipPool = document.getElementById('card-tip-pool');
+const cardStaffTipShare = document.getElementById('card-staff-tip-share');
+const cardBossTipShare = document.getElementById('card-boss-tip-share');
+const userRole = document.getElementById('user-role');
+const navCompanySettings = document.getElementById('nav-company-settings');
 
 const employeeStatsBodyLive = document.getElementById('employee-stats-body-live');
 const allTransactionsBodyLive = document.getElementById('all-transactions-body-live');
@@ -22,9 +30,7 @@ const productsBody = document.getElementById('products-body');
 const btnCreateProduct = document.getElementById('btn-create-product');
 const pCategorySelect = document.getElementById('p-category');
 const pSubcatGroup = document.getElementById('p-subcat-group');
-
-const usersAdminBody = document.getElementById('users-admin-body');
-const btnCreateUser = document.getElementById('btn-create-user');
+const tipPayoutsBody = document.getElementById('tip-payouts-body');
 
 const statsDateInput = document.getElementById('stats-date');
 const tabBtns = document.querySelectorAll('.tab-btn');
@@ -36,6 +42,19 @@ let productCharts = [];
 let activeProductCat = 'Trinken'; 
 let currentUserProfile = null; 
 let lastSelectedDate = null; // Speichert das letzte ausgewählte Datum 
+let companySettings = {
+    tip_distribution: 'Aufteilen',
+    owner_tip_mode: 'none',
+    owner_tip_fixed_percent: 0,
+    owner_tip_multiplier: 1,
+    vouchers_enabled: true,
+    payment_default: 'Bar',
+    payment_enforced: false,
+    category_essen_enabled: true,
+    category_trinken_enabled: true,
+    category_privat_enabled: true,
+    category_tuer_enabled: true
+};
 const buttonFeedbackTimeouts = new Map();
 
 // --- HILFSFUNKTIONEN ---
@@ -43,6 +62,12 @@ function formatPrice(val) {
     const num = parseFloat(val) || 0;
     // Immer ohne Nachkommastellen anzeigen
     return Math.round(num) + '$';
+}
+
+function clampNumber(value, min, max, fallback = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(max, Math.max(min, n));
 }
 
 function flashButtonFeedback(button, state, duration = 1000) {
@@ -76,9 +101,17 @@ function isDoorStaffPosition(position) {
 }
 
 function getAllowedProductStatsCategories(profile) {
-    if (isDoorStaffPosition(profile?.position)) return ['Tür'];
-    if (isOwnerPosition(profile?.position)) return ['Trinken', 'Essen', 'Privat', 'Tür', 'Tänzer*innen'];
-    return ['Trinken', 'Essen', 'Privat', 'Tänzer*innen'];
+    if (isDoorStaffPosition(profile?.position)) {
+        return companySettings.category_tuer_enabled ? ['Tür'] : [];
+    }
+
+    const categories = [];
+    if (companySettings.category_trinken_enabled) categories.push('Trinken');
+    if (companySettings.category_essen_enabled) categories.push('Essen');
+    if (companySettings.category_privat_enabled) categories.push('Privat');
+    if (isOwnerPosition(profile?.position) && companySettings.category_tuer_enabled) categories.push('Tür');
+    categories.push('Tänzer*innen');
+    return categories;
 }
 
 function applyProductStatsRoleVisibility(profile) {
@@ -119,7 +152,7 @@ function getBusinessDate(dateInput) {
 
 function applyDashboardRoleVisibility(profile) {
     const isOwner = isOwnerPosition(profile?.position);
-    const ownerTabIds = ['tab-produkte', 'tab-vouchers', 'tab-users-admin'];
+    const ownerTabIds = ['tab-produkte', 'tab-tip-payouts'];
 
     ownerTabIds.forEach(tabId => {
         const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
@@ -128,9 +161,27 @@ function applyDashboardRoleVisibility(profile) {
         if (tabContent) tabContent.style.display = isOwner ? '' : 'none';
     });
 
+    const vouchersTabBtn = document.querySelector('.tab-btn[data-tab="tab-vouchers"]');
+    const vouchersTabContent = document.getElementById('tab-vouchers');
+    const vouchersVisible = isOwner && companySettings.vouchers_enabled;
+    if (vouchersTabBtn) vouchersTabBtn.style.display = vouchersVisible ? '' : 'none';
+    if (vouchersTabContent) vouchersTabContent.style.display = vouchersVisible ? '' : 'none';
+
     if (!isOwner) {
         const activeBtn = document.querySelector('.tab-btn.active');
-        if (activeBtn && ownerTabIds.includes(activeBtn.dataset.tab)) {
+        if (activeBtn && [...ownerTabIds, 'tab-vouchers'].includes(activeBtn.dataset.tab)) {
+            tabBtns.forEach(b => b.classList.remove('active'));
+            tabContents.forEach(c => c.classList.remove('active'));
+            const defaultBtn = document.querySelector('.tab-btn[data-tab="tab-statistik"]');
+            const defaultTab = document.getElementById('tab-statistik');
+            if (defaultBtn) defaultBtn.classList.add('active');
+            if (defaultTab) defaultTab.classList.add('active');
+        }
+    }
+
+    if (isOwner) {
+        const activeBtn = document.querySelector('.tab-btn.active');
+        if (activeBtn && activeBtn.dataset.tab === 'tab-vouchers' && !companySettings.vouchers_enabled) {
             tabBtns.forEach(b => b.classList.remove('active'));
             tabContents.forEach(c => c.classList.remove('active'));
             const defaultBtn = document.querySelector('.tab-btn[data-tab="tab-statistik"]');
@@ -141,6 +192,48 @@ function applyDashboardRoleVisibility(profile) {
     }
 
     applyProductStatsRoleVisibility(profile);
+}
+
+function getEnabledProductCreateCategories() {
+    const categories = [];
+    if (companySettings.category_essen_enabled) categories.push('Essen');
+    if (companySettings.category_trinken_enabled) categories.push('Trinken');
+    if (companySettings.category_privat_enabled) categories.push('Privat');
+    if (companySettings.category_tuer_enabled) categories.push('Tür');
+    return categories;
+}
+
+function applyProductCreateCategoryVisibility() {
+    if (!pCategorySelect) return;
+
+    const enabledCategories = getEnabledProductCreateCategories();
+    const previousSelection = pCategorySelect.value;
+    pCategorySelect.innerHTML = '';
+
+    if (enabledCategories.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'Keine Kategorie aktiv';
+        pCategorySelect.appendChild(option);
+        pCategorySelect.disabled = true;
+        if (btnCreateProduct) btnCreateProduct.disabled = true;
+        if (pSubcatGroup) pSubcatGroup.style.display = 'none';
+        return;
+    }
+
+    enabledCategories.forEach(cat => {
+        const option = document.createElement('option');
+        option.value = cat;
+        option.textContent = cat;
+        pCategorySelect.appendChild(option);
+    });
+
+    pCategorySelect.disabled = false;
+    if (btnCreateProduct) btnCreateProduct.disabled = false;
+
+    const selectedCategory = enabledCategories.includes(previousSelection) ? previousSelection : enabledCategories[0];
+    pCategorySelect.value = selectedCategory;
+    if (pSubcatGroup) pSubcatGroup.style.display = selectedCategory === 'Trinken' ? '' : 'none';
 }
 
 async function ensureDancerProduct(userId, email, company) {
@@ -175,6 +268,266 @@ function toIsoDateString(dateValue) {
     const month = parts[1].padStart(2, '0');
     const year = parts[2];
     return `${year}-${month}-${day}`;
+}
+
+async function loadCompanyTipDistribution(company) {
+    if (!company) return 'Aufteilen';
+
+    const storageKey = `company_settings:${company}:tip_distribution`;
+    const fallbackLocal = localStorage.getItem(storageKey);
+
+    try {
+        const { data, error } = await supabase
+            .from('company_settings')
+            .select('tip_distribution')
+            .eq('company', company)
+            .maybeSingle();
+
+        if (error) {
+            console.warn('[dashboard] company_settings not available, using local fallback', error.message);
+            return fallbackLocal || 'Aufteilen';
+        }
+
+        const value = data?.tip_distribution === 'Selber Behalten' ? 'Selber Behalten' : 'Aufteilen';
+        localStorage.setItem(storageKey, value);
+        return value;
+    } catch (e) {
+        console.warn('[dashboard] loadCompanyTipDistribution failed, using local fallback', e);
+        return fallbackLocal || 'Aufteilen';
+    }
+}
+
+function normalizeCompanySettings(raw) {
+    const s = raw || {};
+    const ownerTipMode = ['none', 'fixed_percent', 'equal_share', 'multiplier'].includes(s.owner_tip_mode) ? s.owner_tip_mode : 'none';
+    return {
+        tip_distribution: s.tip_distribution === 'Selber Behalten' ? 'Selber Behalten' : 'Aufteilen',
+        owner_tip_mode: ownerTipMode,
+        owner_tip_fixed_percent: clampNumber(s.owner_tip_fixed_percent, 0, 100, 0),
+        owner_tip_multiplier: clampNumber(s.owner_tip_multiplier, 0, 100, 1),
+        vouchers_enabled: s.vouchers_enabled !== false,
+        payment_default: s.payment_default === 'Karte' ? 'Karte' : 'Bar',
+        payment_enforced: s.payment_enforced === true,
+        category_essen_enabled: s.category_essen_enabled !== false,
+        category_trinken_enabled: s.category_trinken_enabled !== false,
+        category_privat_enabled: s.category_privat_enabled !== false,
+        category_tuer_enabled: s.category_tuer_enabled !== false
+    };
+}
+
+async function loadCompanySettings(company) {
+    if (!company) {
+        companySettings = normalizeCompanySettings({});
+        return companySettings;
+    }
+
+    const configKey = `company_settings:${company}:config`;
+    let localConfig = null;
+    try {
+        localConfig = JSON.parse(localStorage.getItem(configKey) || 'null');
+    } catch (_) {
+        localConfig = null;
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('company_settings')
+            .select('*')
+            .eq('company', company)
+            .maybeSingle();
+
+        if (error) {
+            companySettings = normalizeCompanySettings(localConfig || {});
+            return companySettings;
+        }
+
+        companySettings = normalizeCompanySettings(data || localConfig || {});
+        localStorage.setItem(configKey, JSON.stringify(companySettings));
+        return companySettings;
+    } catch (_) {
+        companySettings = normalizeCompanySettings(localConfig || {});
+        return companySettings;
+    }
+}
+
+function getPayoutDateKey(displayDate) {
+    if (!displayDate || displayDate === 'Gesamt') return 'all';
+    return toIsoDateString(displayDate) || 'all';
+}
+
+function getTipPayoutStorageKey(company, dateKey, userId) {
+    return `tip_payout:${company}:${dateKey}:${userId}`;
+}
+
+async function setTipPayoutStatus(company, dateKey, userId, paid, amount) {
+    const localKey = getTipPayoutStorageKey(company, dateKey, userId);
+    const localPayload = {
+        paid: !!paid,
+        amount: Number(amount) || 0,
+        updated_at: new Date().toISOString()
+    };
+
+    try {
+        const { error } = await supabase
+            .from('tip_payouts')
+            .upsert([
+                {
+                    company,
+                    date_key: dateKey,
+                    user_id: userId,
+                    paid: !!paid,
+                    amount_snapshot: Number(amount) || 0,
+                    updated_at: new Date().toISOString()
+                }
+            ], { onConflict: 'company,date_key,user_id' });
+
+        if (error) {
+            localStorage.setItem(localKey, JSON.stringify(localPayload));
+            return;
+        }
+    } catch (_) {
+        localStorage.setItem(localKey, JSON.stringify(localPayload));
+    }
+}
+
+async function loadTipPayoutStatusMap(company, dateKey, userIds) {
+    const statusMap = new Map();
+    if (!company || !userIds.length) return statusMap;
+
+    try {
+        const { data, error } = await supabase
+            .from('tip_payouts')
+            .select('user_id,paid,amount_snapshot,updated_at')
+            .eq('company', company)
+            .eq('date_key', dateKey)
+            .in('user_id', userIds);
+
+        if (!error && Array.isArray(data)) {
+            data.forEach(row => {
+                statusMap.set(String(row.user_id), {
+                    paid: !!row.paid,
+                    amount_snapshot: Number(row.amount_snapshot) || 0,
+                    updated_at: row.updated_at || null
+                });
+            });
+            return statusMap;
+        }
+    } catch (_) {
+        // fallback below
+    }
+
+    userIds.forEach(userId => {
+        const raw = localStorage.getItem(getTipPayoutStorageKey(company, dateKey, userId));
+        if (!raw) return;
+        try {
+            const parsed = JSON.parse(raw);
+            statusMap.set(String(userId), {
+                paid: !!parsed.paid,
+                amount_snapshot: Number(parsed.amount) || 0,
+                updated_at: parsed.updated_at || null
+            });
+        } catch (_) {
+            // ignore broken local entry
+        }
+    });
+
+    return statusMap;
+}
+
+async function renderTipPayoutTable(stats, displayDate, tipSplit) {
+    if (!tipPayoutsBody) return;
+
+    const company = currentUserProfile?.company;
+    const rows = Object.entries(stats)
+        .map(([id, s]) => ({ id, ...s }))
+        .filter(s => !isOwnerPosition(s.position));
+
+    const recipientCount = rows.length;
+    const splitPerRecipient = recipientCount > 0 ? (tipSplit.staffShare / recipientCount) : 0;
+
+    const computedRows = rows.map(row => {
+        const ownTips = Number(row.tips) || 0;
+        const computed = companySettings.tip_distribution === 'Aufteilen'
+            ? splitPerRecipient
+            : ownTips;
+        return { ...row, tipAmount: computed };
+    });
+
+    const dateKey = getPayoutDateKey(displayDate);
+    const statusMap = await loadTipPayoutStatusMap(company, dateKey, computedRows.map(r => r.id));
+
+    tipPayoutsBody.innerHTML = '';
+
+    computedRows.forEach(row => {
+        const status = statusMap.get(String(row.id)) || { paid: false };
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td>${shortenEmail(row.email)}</td>
+            <td>${row.position || '-'}</td>
+            <td>${formatPrice(row.tipAmount)}</td>
+            <td><span class="status-pill ${status.paid ? 'paid' : 'pending'}">${status.paid ? 'Ausgezahlt' : 'Offen'}</span></td>
+            <td><button class="tip-toggle-btn ${status.paid ? 'mark-open' : ''}" data-user-id="${row.id}" data-paid="${status.paid ? '1' : '0'}" data-amount="${row.tipAmount}">${status.paid ? 'Auf offen setzen' : 'Als ausgezahlt markieren'}</button></td>
+        `;
+        tipPayoutsBody.appendChild(tr);
+    });
+
+    tipPayoutsBody.querySelectorAll('.tip-toggle-btn').forEach(btn => {
+        btn.onclick = async (e) => {
+            const userId = e.currentTarget.dataset.userId;
+            const currentPaid = e.currentTarget.dataset.paid === '1';
+            const amount = Number(e.currentTarget.dataset.amount) || 0;
+            await setTipPayoutStatus(company, dateKey, userId, !currentPaid, amount);
+            await loadStats(currentUserProfile, statsDateInput?.value === 'Gesamt' ? 'all' : statsDateInput?.value);
+        };
+    });
+}
+
+function getOwnerTipLabel() {
+    return 'Abgabe an Chef';
+}
+
+function applyBossCashLabel() {
+    if (!labelBossTipShare) return;
+    labelBossTipShare.textContent = getOwnerTipLabel();
+}
+
+function applyTipCardsVisibility() {
+    const isSplit = companySettings.tip_distribution === 'Aufteilen';
+
+    if (cardTotalTips) cardTotalTips.style.display = isSplit ? 'none' : '';
+    if (cardTipPool) cardTipPool.style.display = isSplit ? '' : 'none';
+    if (cardStaffTipShare) cardStaffTipShare.style.display = isSplit ? '' : 'none';
+    if (cardBossTipShare) cardBossTipShare.style.display = '';
+}
+
+function calculateTipSplit(totalTips, staffParticipantCount) {
+    const tips = Math.max(0, Number(totalTips) || 0);
+    const staffCount = Math.max(0, Number(staffParticipantCount) || 0);
+
+    if (companySettings.tip_distribution === 'Selber Behalten') {
+        return { pool: 0, staffShare: tips, bossShare: 0 };
+    }
+
+    let bossShare = 0;
+    const mode = companySettings.owner_tip_mode || 'none';
+
+    if (mode === 'fixed_percent') {
+        const pct = clampNumber(companySettings.owner_tip_fixed_percent, 0, 100, 0);
+        bossShare = tips * (pct / 100);
+    } else if (mode === 'equal_share') {
+        bossShare = staffCount > 0 ? (tips / (staffCount + 1)) : tips;
+    } else if (mode === 'multiplier') {
+        const mult = clampNumber(companySettings.owner_tip_multiplier, 0, 100, 1);
+        if (staffCount <= 0 && mult > 0) bossShare = tips;
+        else if (staffCount > 0) bossShare = tips * (mult / (staffCount + mult));
+    }
+
+    bossShare = Math.min(tips, Math.max(0, bossShare));
+    return {
+        pool: tips,
+        staffShare: tips - bossShare,
+        bossShare
+    };
 }
 
 // --- INITIALISIERUNG ---
@@ -301,8 +654,12 @@ function init() {
     }
 
     if (btnCreateProduct) btnCreateProduct.onclick = handleCreateProduct;
+    if (pCategorySelect) {
+        pCategorySelect.onchange = () => {
+            if (pSubcatGroup) pSubcatGroup.style.display = pCategorySelect.value === 'Trinken' ? '' : 'none';
+        };
+    }
     if (btnCreateVoucher) btnCreateVoucher.onclick = handleCreateVoucher;
-    if (btnCreateUser) btnCreateUser.onclick = handleCreateUser;
     if (btnLogout) btnLogout.onclick = async () => { await supabase.auth.signOut(); window.location.href = 'Index.html'; };
 
     checkAuthAndLoad();
@@ -324,18 +681,31 @@ async function checkAuthAndLoad() {
     }
 
     currentUserProfile = profile;
+    if (userRole) userRole.textContent = profile.position || 'Mitarbeiter';
     // show/hide storage nav button based on owner role
     try {
         const navStorageBtn = document.getElementById('nav-storage');
-        if (navStorageBtn) navStorageBtn.style.display = isOwnerPosition(profile.position) ? '' : 'none';
+        const isOwner = isOwnerPosition(profile.position);
+        if (navStorageBtn) navStorageBtn.style.display = isOwner ? '' : 'none';
+        if (navCompanySettings) navCompanySettings.style.display = isOwner ? '' : 'none';
+        if (userRole) {
+            userRole.style.cursor = isOwner ? 'pointer' : 'default';
+            userRole.title = isOwner ? 'Unternehmens-Einstellungen öffnen' : '';
+            userRole.onclick = isOwner ? () => { window.location.href = 'company-settings.html'; } : null;
+        }
     } catch (e) { console.warn('[dashboard] could not set nav-storage visibility', e); }
+
+    companySettings = await loadCompanySettings(profile.company);
+    applyBossCashLabel();
+    applyTipCardsVisibility();
+    applyProductCreateCategoryVisibility();
+
     applyDashboardRoleVisibility(profile);
     loadStats(profile);
     
     if (isOwnerPosition(profile.position)) {
         loadVouchers();
         loadProducts();
-        loadAdminUsers();
     }
 }
 
@@ -422,10 +792,19 @@ async function loadStats(currentUserProfile, targetDate = null) {
 
     if (totalSalesAll) totalSalesAll.textContent = formatPrice(todaySales);
     if (totalTipsAll) totalTipsAll.textContent = formatPrice(todayTips);
-    if (totalBossCash) {
-        const abgabe = todayBarSales - todayCardTips;
-        totalBossCash.textContent = formatPrice(abgabe);
-        totalBossCash.style.color = abgabe < 0 ? '#dc3545' : '#166534';
+    const staffParticipantCount = Object.values(stats).filter(s => !isOwnerPosition(s.position)).length;
+    const tipSplit = calculateTipSplit(todayTips, staffParticipantCount);
+    if (totalTipPool) totalTipPool.textContent = formatPrice(tipSplit.pool);
+    if (totalStaffTipShare) totalStaffTipShare.textContent = formatPrice(tipSplit.staffShare);
+
+    const abgabeAnChef = companySettings.tip_distribution === 'Selber Behalten'
+        ? (todayBarSales - todayTips)
+        : todayBarSales;
+
+    if (totalBossTipShare) {
+        const bossValue = abgabeAnChef;
+        totalBossTipShare.textContent = formatPrice(bossValue);
+        totalBossTipShare.style.color = bossValue > 0 ? '#166534' : '#6c757d';
     }
 
     if (employeeStatsBodyLive) {
@@ -436,6 +815,8 @@ async function loadStats(currentUserProfile, targetDate = null) {
             employeeStatsBodyLive.appendChild(tr);
         });
     }
+
+    await renderTipPayoutTable(stats, today, tipSplit);
 
     let chartData;
     if (today === 'Gesamt') {
@@ -702,6 +1083,10 @@ async function handleCreateProduct() {
     const ek = ekValue.trim() === '' ? null : (Number.isFinite(ekParsed) ? ekParsed : null);
 
     const category = document.getElementById('p-category').value;
+    if (!category) {
+        flashButtonFeedback(saveButton, 'error');
+        return;
+    }
     const subcategory = category === 'Trinken' ? document.getElementById('p-subcategory').value : null;
 
     const insertData = { name, price, category, subcategory, company: currentUserProfile?.company || null };
@@ -803,145 +1188,6 @@ async function handleCreateVoucher() {
     }
     flashButtonFeedback(saveButton, 'success');
     loadVouchers();
-}
-
-// --- MITARBEITER VERWALTUNG ---
-
-async function loadAdminUsers() {
-    const company = currentUserProfile?.company;
-    console.log('[dashboard] loadAdminUsers currentUserProfile=', currentUserProfile);
-    if (!company) {
-        console.warn('[dashboard] loadAdminUsers: no company for current profile');
-        return;
-    }
-    let query = supabase.from('users').select('*').eq('company', company).order('email');
-    console.log('[dashboard] loadAdminUsers query company=', company);
-    const { data: users, error: usersError } = await query;
-    if (usersError) console.error('[dashboard] loadAdminUsers fetch error', usersError);
-    if (usersAdminBody) {
-        usersAdminBody.innerHTML = '';
-        users.forEach(u => {
-            const tr = document.createElement('tr');
-            renderUserRowView(tr, u);
-            usersAdminBody.appendChild(tr);
-        });
-    }
-}
-
-function renderUserRowView(tr, u) {
-    console.log('[dashboard] renderUserRowView user=', u);
-    tr.innerHTML = `<td>${u.email}</td><td>${u.position}</td><td>${new Date(u.created_at).toLocaleDateString()}</td>
-        <td><button class="edit-btn">✏️</button><button class="del-u del-btn" data-id="${u.id}">🗑️</button></td>`;
-    tr.querySelector('.edit-btn').onclick = () => { console.log('[dashboard] edit button clicked for user', u.id); renderUserRowEdit(tr, u); };
-    tr.querySelector('.del-u').onclick = async () => {
-        console.log('[dashboard] delete button clicked for user', u.id);
-        if (!confirm('Löschen?')) return;
-        const company = currentUserProfile?.company;
-        let query = supabase.from('users').delete().eq('id', u.id);
-        if (company) query = query.eq('company', company);
-        const { error } = await query;
-        if (error) console.error('[dashboard] delete user error', error);
-        loadAdminUsers();
-    };
-}
-
-function renderUserRowEdit(tr, u) {
-    tr.innerHTML = `<td><input type="text" value="${u.email}" class="edit-email"></td><td><select class="edit-pos"><option value="Mitarbeiter" ${u.position==='Mitarbeiter'?'selected':''}>Mitarbeiter</option><option value="Tänzer*in" ${u.position==='Tänzer*in'?'selected':''}>Tänzer*in</option><option value="Türsteher*in" ${u.position==='Türsteher*in'?'selected':''}>Türsteher*in</option><option value="Inhaber" ${u.position==='Inhaber'?'selected':''}>Inhaber</option></select></td><td>-</td>
-        <td><button class="save-btn">💾</button><button class="cancel-btn">❌</button></td>`;
-    tr.querySelector('.cancel-btn').onclick = () => renderUserRowView(tr, u);
-    tr.querySelector('.save-btn').onclick = async () => {
-        const email = tr.querySelector('.edit-email').value;
-        const position = tr.querySelector('.edit-pos').value;
-        const company = currentUserProfile?.company;
-        console.log('[dashboard] updating user', { id: u.id, email, position, company });
-
-        try {
-            // fetch current target user record before update
-            const { data: beforeData, error: beforeErr } = await supabase.from('users').select('*').eq('id', u.id).maybeSingle();
-            if (beforeErr) console.error('[dashboard] error fetching user before update', beforeErr);
-            console.log('[dashboard] before update record:', beforeData);
-
-            // perform update and request returning row
-            let updateQuery = supabase.from('users').update({ email, position }).eq('id', u.id).select().maybeSingle();
-            if (company) updateQuery = supabase.from('users').update({ email, position }).eq('id', u.id).eq('company', company).select().maybeSingle();
-            const { data: updateData, error } = await updateQuery;
-            if (error) {
-                console.error('Fehler beim Aktualisieren des Nutzers:', error);
-                loadAdminUsers();
-                return;
-            }
-            console.log('[dashboard] update result', updateData);
-
-            // fetch after update to verify
-            const { data: afterData, error: afterErr } = await supabase.from('users').select('*').eq('id', u.id).maybeSingle();
-            if (afterErr) console.error('[dashboard] error fetching user after update', afterErr);
-            console.log('[dashboard] after update record:', afterData);
-
-            // If updateData is null or unchanged, attempt fallback (only for debugging)
-            if ((!updateData) || (beforeData && afterData && beforeData.position === afterData.position && beforeData.email === afterData.email)) {
-                console.warn('[dashboard] update did not change record using company filter, attempting fallback update without company filter');
-                try {
-                    const { data: fallbackData, error: fallbackErr } = await supabase.from('users').update({ email, position }).eq('id', u.id).select().maybeSingle();
-                    if (fallbackErr) {
-                        console.error('[dashboard] fallback update error', fallbackErr);
-                    } else {
-                        console.log('[dashboard] fallback update result', fallbackData);
-                        const { data: afterFallback, error: afterFbErr } = await supabase.from('users').select('*').eq('id', u.id).maybeSingle();
-                        if (afterFbErr) console.error('[dashboard] error fetching after fallback', afterFbErr);
-                        console.log('[dashboard] after fallback record:', afterFallback);
-                        alert('Update wurde mit Fallback durchgeführt (Company-Feld passte nicht).');
-                    }
-                } catch (ex) {
-                    console.error('[dashboard] fallback update exception', ex);
-                }
-            }
-
-        } catch (err) {
-            console.error('[dashboard] unexpected error during user update flow', err);
-            loadAdminUsers();
-            return;
-        }
-
-        if (position === 'Tänzer*in') {
-            await ensureDancerProduct(u.id, email, company);
-            loadProducts();
-        }
-
-        loadAdminUsers();
-    };
-}
-
-async function handleCreateUser() {
-    const saveButton = btnCreateUser;
-    const email = document.getElementById('u-email').value;
-    const position = document.getElementById('u-position').value;
-    const company = currentUserProfile?.company;
-    if (!company) {
-        flashButtonFeedback(saveButton, 'error');
-        return;
-    }
-
-    const { data: newUser, error } = await supabase
-        .from('users')
-        .insert([{ email, position, company, created_at: new Date().toISOString() }])
-        .select('id,email')
-        .single();
-
-    if (error) {
-        console.error('Fehler beim Anlegen des Nutzers:', error);
-        flashButtonFeedback(saveButton, 'error');
-        loadAdminUsers();
-        return;
-    }
-
-    if (position === 'Tänzer*in') {
-        await ensureDancerProduct(newUser.id, newUser.email, company);
-        loadProducts();
-    }
-
-    flashButtonFeedback(saveButton, 'success');
-
-    loadAdminUsers();
 }
 
 // --- PRODUKT STATISTIK (CHARTS) ---

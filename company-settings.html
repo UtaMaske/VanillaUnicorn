@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unternehmens-Einstellungen</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+    <header>
+        <nav id="main-nav">
+            <button onclick="window.location.href='Index.html'" class="nav-btn">Kasse</button>
+            <button onclick="window.location.href='dashboard.html'" class="nav-btn">📊 Dashboard</button>
+            <button id="nav-storage" class="nav-btn">📦 Lager</button>
+            <button class="nav-btn active">🏢 Unternehmen</button>
+        </nav>
+        <div class="user-info">
+            <span id="user-display">Lade...</span>
+            <span id="user-role" class="role-badge"></span>
+            <button id="btn-logout">Abmelden</button>
+        </div>
+    </header>
+
+    <main class="dashboard-container">
+        <h1>Unternehmens-Einstellungen</h1>
+
+        <div class="view-toggle" style="margin-bottom:12px;">
+            <button id="btn-view-tip" class="active">💰 Trinkgeld</button>
+            <button id="btn-view-cashdesk">🧾 Kasse</button>
+            <button id="btn-view-staff">👥 Mitarbeiter</button>
+        </div>
+
+        <section id="settings-view-tip" class="settings-card settings-view active">
+            <h2>Trinkgeld-Verteilung</h2>
+            <p class="settings-subtitle">Lege fest, wie Trinkgeld im Unternehmen behandelt wird.</p>
+            <div class="tip-distribution-options">
+                <label class="distribution-option">
+                    <input type="radio" name="tip-distribution" value="Aufteilen" checked>
+                    <span>Aufteilen</span>
+                </label>
+                <label class="distribution-option">
+                    <input type="radio" name="tip-distribution" value="Selber Behalten">
+                    <span>Selber Behalten</span>
+                </label>
+            </div>
+
+            <div id="owner-tip-settings-block" class="settings-grid" style="margin-top: 10px;">
+                <div class="settings-field full-width">
+                    <label>Inhaber-Anteil vom Trinkgeld</label>
+                    <select id="setting-owner-tip-mode">
+                        <option value="none">Gar nicht</option>
+                        <option value="fixed_percent">Fixer Prozentbetrag</option>
+                        <option value="equal_share">Anteilig wie Mitarbeiter</option>
+                        <option value="multiplier">X mal so viel wie Mitarbeiter</option>
+                    </select>
+                </div>
+                <div id="owner-tip-percent-group" class="settings-field" style="display:none;">
+                    <label>Fixer Prozentbetrag (%)</label>
+                    <input type="number" id="setting-owner-tip-fixed-percent" min="0" max="100" step="0.1" value="0">
+                </div>
+                <div id="owner-tip-multiplier-group" class="settings-field" style="display:none;">
+                    <label>Multiplikator (x)</label>
+                    <input type="number" id="setting-owner-tip-multiplier" min="0" step="0.1" value="1">
+                </div>
+            </div>
+
+            <div class="settings-actions">
+                <button id="btn-save-tip-settings" class="save-voucher-btn">💾 Trinkgeld speichern</button>
+                <div id="tip-settings-status" class="status-message"></div>
+            </div>
+        </section>
+
+        <section id="settings-view-cashdesk" class="settings-card settings-view">
+            <h2>Kasse Toggles</h2>
+            <p class="settings-subtitle">Schalte Funktionen in der Kasse ein oder aus.</p>
+
+            <div class="settings-grid">
+                <div class="settings-field">
+                    <label class="distribution-option">
+                        <input type="checkbox" id="setting-vouchers-enabled" checked>
+                        <span>Gutscheine aktivieren</span>
+                    </label>
+                </div>
+
+                <div class="settings-field">
+                    <label>Zahlungsart Vorgabe</label>
+                    <select id="setting-payment-default">
+                        <option value="Bar">Bar</option>
+                        <option value="Karte">Karte</option>
+                    </select>
+                </div>
+
+                <div class="settings-field">
+                    <label class="distribution-option">
+                        <input type="checkbox" id="setting-payment-enforced">
+                        <span>Zahlungsart immer erzwingen</span>
+                    </label>
+                </div>
+
+                <div class="settings-field full-width">
+                    <label>Kategorien in der Kasse</label>
+                    <div class="category-toggles">
+                        <label class="distribution-option"><input type="checkbox" id="setting-cat-essen" checked><span>Essen</span></label>
+                        <label class="distribution-option"><input type="checkbox" id="setting-cat-trinken" checked><span>Trinken</span></label>
+                        <label class="distribution-option"><input type="checkbox" id="setting-cat-privat" checked><span>Privat</span></label>
+                        <label class="distribution-option"><input type="checkbox" id="setting-cat-tuer" checked><span>Tür</span></label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-actions" style="margin-top: 14px;">
+                <button id="btn-save-cashdesk-settings" class="save-voucher-btn">💾 Kassen-Einstellungen speichern</button>
+                <div id="cashdesk-settings-status" class="status-message"></div>
+            </div>
+        </section>
+
+        <section id="settings-view-staff" class="settings-card settings-view">
+            <h2>Mitarbeiterverwaltung</h2>
+            <p class="settings-subtitle">Mitarbeiter anlegen, bearbeiten und löschen.</p>
+            <div class="voucher-creator-card" style="margin-bottom: 16px;">
+                <div class="voucher-form-grid">
+                    <div class="form-group"><label>E-Mail / Kennung</label><input type="text" id="u-email"></div>
+                    <div class="form-group">
+                        <label>Position</label>
+                        <select id="u-position">
+                            <option value="Mitarbeiter">Mitarbeiter</option>
+                            <option value="Tänzer*in">Tänzer*in</option>
+                            <option value="Türsteher*in">Türsteher*in</option>
+                            <option value="Inhaber">Inhaber</option>
+                        </select>
+                    </div>
+                    <div class="form-group btn-align-bottom">
+                        <button id="btn-create-user" class="save-voucher-btn">➕ Mitarbeiter anlegen</button>
+                    </div>
+                </div>
+            </div>
+            <div class="table-wrapper">
+                <table id="users-admin-table">
+                    <thead>
+                        <tr>
+                            <th>E-Mail</th>
+                            <th>Position</th>
+                            <th>Registriert am</th>
+                            <th>Aktion</th>
+                        </tr>
+                    </thead>
+                    <tbody id="users-admin-body"></tbody>
+                </table>
+            </div>
+            <div class="settings-actions" style="margin-top: 14px;">
+                <button id="btn-save-staff-settings" class="save-voucher-btn">💾 Mitarbeiter-Ansicht speichern</button>
+                <div id="staff-settings-status" class="status-message"></div>
+            </div>
+        </section>
+    </main>
+
+    <script src="company-settings.js" type="module"></script>
+</body>
+</html>

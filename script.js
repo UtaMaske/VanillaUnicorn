@@ -12,6 +12,19 @@ let tipMode = 'total';
 let appliedVoucher = null;
 let currentUserProfile = null; 
 let paymentMethod = 'Bar'; // Standardmäßig Barzahlung
+let companySettings = {
+    tip_distribution: 'Aufteilen',
+    owner_tip_mode: 'none',
+    owner_tip_fixed_percent: 0,
+    owner_tip_multiplier: 1,
+    vouchers_enabled: true,
+    payment_default: 'Bar',
+    payment_enforced: false,
+    category_essen_enabled: true,
+    category_trinken_enabled: true,
+    category_privat_enabled: true,
+    category_tuer_enabled: true
+};
 
 // Status timers to auto-clear messages
 const statusTimeouts = new Map();
@@ -52,6 +65,7 @@ const userDisplay = document.getElementById('user-display');
 const userRole = document.getElementById('user-role');
 const navDashboard = document.getElementById('nav-dashboard');
 const navStorage = document.getElementById('nav-storage');
+const navCompanySettings = document.getElementById('nav-company-settings');
 
 const employeeModal = document.getElementById('employee-modal');
 const employeeListDiv = document.getElementById('employee-list');
@@ -77,6 +91,118 @@ const checkoutStatusDiv = document.getElementById('checkout-status');
 const btnCheckout = document.getElementById('btn-checkout');
 const btnPayCash = document.getElementById('btn-pay-cash');
 const btnPayCard = document.getElementById('btn-pay-card');
+const voucherSection = document.getElementById('voucher-section');
+const paymentMethodSection = document.getElementById('payment-method-section');
+
+function isOwnerPosition(position) {
+    return String(position || '').trim().toLowerCase() === 'inhaber';
+}
+
+function getCompanySettingsStorageKey(company) {
+    return `company_settings:${company}:config`;
+}
+
+function normalizeCompanySettings(raw) {
+    const s = raw || {};
+    const ownerTipMode = ['none', 'fixed_percent', 'equal_share', 'multiplier'].includes(s.owner_tip_mode) ? s.owner_tip_mode : 'none';
+    return {
+        tip_distribution: s.tip_distribution === 'Selber Behalten' ? 'Selber Behalten' : 'Aufteilen',
+        owner_tip_mode: ownerTipMode,
+        owner_tip_fixed_percent: Number.isFinite(Number(s.owner_tip_fixed_percent)) ? Math.min(100, Math.max(0, Number(s.owner_tip_fixed_percent))) : 0,
+        owner_tip_multiplier: Number.isFinite(Number(s.owner_tip_multiplier)) ? Math.min(100, Math.max(0, Number(s.owner_tip_multiplier))) : 1,
+        vouchers_enabled: s.vouchers_enabled !== false,
+        payment_default: s.payment_default === 'Karte' ? 'Karte' : 'Bar',
+        payment_enforced: s.payment_enforced === true,
+        category_essen_enabled: s.category_essen_enabled !== false,
+        category_trinken_enabled: s.category_trinken_enabled !== false,
+        category_privat_enabled: s.category_privat_enabled !== false,
+        category_tuer_enabled: s.category_tuer_enabled !== false
+    };
+}
+
+function isCategoryEnabled(category) {
+    if (category === 'Essen') return companySettings.category_essen_enabled;
+    if (category === 'Trinken') return companySettings.category_trinken_enabled;
+    if (category === 'Privat') return companySettings.category_privat_enabled;
+    if (category === 'Tür') return companySettings.category_tuer_enabled;
+    return true;
+}
+
+function setPaymentMethod(nextMethod) {
+    paymentMethod = nextMethod === 'Karte' ? 'Karte' : 'Bar';
+    btnPayCash.classList.toggle('active', paymentMethod === 'Bar');
+    btnPayCard.classList.toggle('active', paymentMethod === 'Karte');
+}
+
+function applyCompanySettingsToUI() {
+    if (voucherSection) voucherSection.style.display = companySettings.vouchers_enabled ? '' : 'none';
+    if (!companySettings.vouchers_enabled) {
+        appliedVoucher = null;
+        if (voucherCodeInput) voucherCodeInput.value = '';
+        if (voucherStatusDiv) voucherStatusDiv.innerHTML = '';
+    }
+
+    if (paymentMethodSection) paymentMethodSection.style.display = '';
+    setPaymentMethod(companySettings.payment_default);
+
+    if (companySettings.payment_enforced) {
+        if (btnPayCash) {
+            btnPayCash.disabled = true;
+            btnPayCash.style.display = companySettings.payment_default === 'Bar' ? '' : 'none';
+        }
+        if (btnPayCard) {
+            btnPayCard.disabled = true;
+            btnPayCard.style.display = companySettings.payment_default === 'Karte' ? '' : 'none';
+        }
+    } else {
+        if (btnPayCash) {
+            btnPayCash.disabled = false;
+            btnPayCash.style.display = '';
+        }
+        if (btnPayCard) {
+            btnPayCard.disabled = false;
+            btnPayCard.style.display = '';
+        }
+    }
+
+    renderProducts();
+    updateTotalsOnly();
+}
+
+async function loadCompanySettings(company) {
+    if (!company) {
+        companySettings = normalizeCompanySettings({});
+        return;
+    }
+
+    const storageKey = getCompanySettingsStorageKey(company);
+    let localConfig = null;
+    try {
+        localConfig = JSON.parse(localStorage.getItem(storageKey) || 'null');
+    } catch (e) {
+        localConfig = null;
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('company_settings')
+            .select('*')
+            .eq('company', company)
+            .maybeSingle();
+
+        if (error) {
+            console.warn('[kasse] company_settings fallback localStorage', error.message);
+            companySettings = normalizeCompanySettings(localConfig || {});
+            return;
+        }
+
+        companySettings = normalizeCompanySettings(data || localConfig || {});
+        localStorage.setItem(storageKey, JSON.stringify(companySettings));
+    } catch (e) {
+        console.warn('[kasse] loadCompanySettings failed, fallback localStorage', e);
+        companySettings = normalizeCompanySettings(localConfig || {});
+    }
+}
 
 // --- LOGIN LOGIK ---
 async function handleLogin() {
@@ -125,8 +251,14 @@ async function updateUI(user) {
                 userRole.textContent = profile.position || 'Mitarbeiter';
                 navDashboard.style.display = 'block';
                 // show storage nav only to Inhaber
-                const isOwner = String(profile.position || '').trim().toLowerCase() === 'inhaber';
+                const isOwner = isOwnerPosition(profile.position);
                 if (navStorage) navStorage.style.display = isOwner ? 'block' : 'none';
+                if (navCompanySettings) navCompanySettings.style.display = isOwner ? 'block' : 'none';
+                if (userRole) {
+                    userRole.style.cursor = isOwner ? 'pointer' : 'default';
+                    userRole.title = isOwner ? 'Unternehmens-Einstellungen öffnen' : '';
+                    userRole.onclick = isOwner ? () => { window.location.href = 'company-settings.html'; } : null;
+                }
 
                 if (!profile.company) {
                     console.error('Benutzerprofil ohne company:', profile.id);
@@ -135,6 +267,9 @@ async function updateUI(user) {
                     showStatus(checkoutStatusDiv, `<span class="status-error">Deinem Konto ist keine Firma zugewiesen.</span>`);
                     return;
                 }
+
+                await loadCompanySettings(profile.company);
+                applyCompanySettingsToUI();
             }
         } catch (e) {
             console.error('Fehler beim UI-Update:', e);
@@ -147,7 +282,15 @@ async function updateUI(user) {
         userDisplay.textContent = '';
         userRole.textContent = '';
         currentUserProfile = null;
-            if (navStorage) navStorage.style.display = 'none';
+        companySettings = normalizeCompanySettings({});
+        if (navStorage) navStorage.style.display = 'none';
+        if (navCompanySettings) navCompanySettings.style.display = 'none';
+        if (userRole) {
+            userRole.style.cursor = 'default';
+            userRole.title = '';
+            userRole.onclick = null;
+        }
+        applyCompanySettingsToUI();
     }
 }
 
@@ -186,6 +329,7 @@ function renderProducts() {
 
     products.forEach(p => {
         if (p.category === 'Tänzer*innen') return;
+        if (!isCategoryEnabled(p.category)) return;
         if (isDoorStaff && p.category !== 'Tür') return;
         if (!isDoorStaff && !isOwner && p.category === 'Tür') return;
 
@@ -220,7 +364,7 @@ function renderProducts() {
 
     // Hide categories/subcategories that have no products
     const essenSection = document.getElementById('essen-kategorie');
-    if (essenSection) essenSection.style.display = essenProdukteDiv.children.length ? '' : 'none';
+    if (essenSection) essenSection.style.display = (companySettings.category_essen_enabled && essenProdukteDiv.children.length) ? '' : 'none';
 
     const trinkenSection = document.getElementById('trinken-kategorie');
     const shotsBlock = trinkenShotsDiv.closest('.subkategorie-block');
@@ -235,20 +379,20 @@ function renderProducts() {
 
     if (trinkenSection) {
         const hasAnyTrinken = [trinkenShotsDiv, trinkenCocktailsDiv, trinkenHartalkDiv, trinkenNonalkDiv].some(div => div.children.length);
-        trinkenSection.style.display = hasAnyTrinken ? '' : 'none';
+        trinkenSection.style.display = (companySettings.category_trinken_enabled && hasAnyTrinken) ? '' : 'none';
     }
 
     const privatSection = document.getElementById('privat-kategorie');
-    if (privatSection) privatSection.style.display = privatProdukteDiv.children.length ? '' : 'none';
+    if (privatSection) privatSection.style.display = (companySettings.category_privat_enabled && privatProdukteDiv.children.length) ? '' : 'none';
 
     const tuerSection = document.getElementById('tuer-kategorie');
-    if (tuerSection) tuerSection.style.display = tuerProdukteDiv && tuerProdukteDiv.children.length ? '' : 'none';
+    if (tuerSection) tuerSection.style.display = (companySettings.category_tuer_enabled && tuerProdukteDiv && tuerProdukteDiv.children.length) ? '' : 'none';
 
     if (isDoorStaff) {
         if (essenSection) essenSection.style.display = 'none';
         if (trinkenSection) trinkenSection.style.display = 'none';
         if (privatSection) privatSection.style.display = 'none';
-        if (tuerSection) tuerSection.style.display = '';
+        if (tuerSection) tuerSection.style.display = companySettings.category_tuer_enabled ? '' : 'none';
     }
 }
 
@@ -397,6 +541,13 @@ function applyQuickTip(percent) {
 }
 
 async function applyVoucher() {
+    if (!companySettings.vouchers_enabled) {
+        appliedVoucher = null;
+        showStatus(voucherStatusDiv, `<span class="voucher-error">Gutscheine deaktiviert</span>`);
+        updateTotalsOnly();
+        return;
+    }
+
     checkoutStatusDiv.innerHTML = '';
     const code = voucherCodeInput.value.trim().toUpperCase();
     const company = currentUserProfile?.company;
@@ -627,8 +778,14 @@ function init() {
     btnTipAmount.onclick = () => { tipMode = 'amount'; btnTipAmount.classList.add('active'); btnTipTotal.classList.remove('active'); updateTotalsOnly(); };
     btnTipTotal.onclick = () => { tipMode = 'total'; btnTipTotal.classList.add('active'); btnTipAmount.classList.remove('active'); updateTotalsOnly(); };
     
-    btnPayCash.onclick = () => { paymentMethod = 'Bar'; btnPayCash.classList.add('active'); btnPayCard.classList.remove('active'); };
-    btnPayCard.onclick = () => { paymentMethod = 'Karte'; btnPayCard.classList.add('active'); btnPayCash.classList.remove('active'); };
+    btnPayCash.onclick = () => {
+        if (companySettings.payment_enforced) return;
+        setPaymentMethod('Bar');
+    };
+    btnPayCard.onclick = () => {
+        if (companySettings.payment_enforced) return;
+        setPaymentMethod('Karte');
+    };
 
     tipInput.oninput = updateTotalsOnly;
 
