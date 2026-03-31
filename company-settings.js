@@ -4,6 +4,7 @@ const supabaseUrl = 'https://cloiwnjtyrmnoeoqhvag.supabase.co';
 const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNsb2l3bmp0eXJtbm9lb3FodmFnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxNTMzMTIsImV4cCI6MjA4ODcyOTMxMn0.JGZOGytcTj0keyoANSSkqm8wGnFL3EOmsg1MqFpi8Es';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+
 const userDisplay = document.getElementById('user-display');
 const userRole = document.getElementById('user-role');
 const btnLogout = document.getElementById('btn-logout');

@@ -20,6 +20,7 @@ const cardBossTipShare = document.getElementById('card-boss-tip-share');
 const userRole = document.getElementById('user-role');
 const navCompanySettings = document.getElementById('nav-company-settings');
 
+
 const employeeStatsBodyLive = document.getElementById('employee-stats-body-live');
 const allTransactionsBodyLive = document.getElementById('all-transactions-body-live');
 const hourlyStatsBody = document.getElementById('hourly-stats-body');

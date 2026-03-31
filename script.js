@@ -72,6 +72,7 @@ const navDashboard = document.getElementById('nav-dashboard');
 const navStorage = document.getElementById('nav-storage');
 const navCompanySettings = document.getElementById('nav-company-settings');
 
+
 const employeeModal = document.getElementById('employee-modal');
 const employeeListDiv = document.getElementById('employee-list');
 const btnCloseModal = document.getElementById('btn-close-modal');
