@@ -59,6 +59,11 @@ const appContainer = document.getElementById('app-container');
 const loginEmail = document.getElementById('login-email');
 const loginPass = document.getElementById('login-password');
 const btnLogin = document.getElementById('btn-login');
+const btnRegister = document.getElementById('btn-register');
+const btnToggleAuth = document.getElementById('btn-toggle-auth');
+const authTitle = document.getElementById('auth-title');
+const registerFields = document.getElementById('register-fields');
+const registerPosition = document.getElementById('register-position');
 const btnLogout = document.getElementById('btn-logout');
 const loginError = document.getElementById('login-error');
 const userDisplay = document.getElementById('user-display');
@@ -93,6 +98,91 @@ const btnPayCash = document.getElementById('btn-pay-cash');
 const btnPayCard = document.getElementById('btn-pay-card');
 const voucherSection = document.getElementById('voucher-section');
 const paymentMethodSection = document.getElementById('payment-method-section');
+let authMode = 'login';
+
+function setAuthMode(mode) {
+    authMode = mode === 'register' ? 'register' : 'login';
+    const inRegisterMode = authMode === 'register';
+
+    if (authTitle) authTitle.textContent = inRegisterMode ? 'Registrierung' : 'Kassen-Login';
+    if (registerFields) registerFields.style.display = inRegisterMode ? 'block' : 'none';
+    if (btnLogin) btnLogin.style.display = inRegisterMode ? 'none' : '';
+    if (btnRegister) btnRegister.style.display = inRegisterMode ? '' : 'none';
+    if (btnToggleAuth) {
+        btnToggleAuth.textContent = inRegisterMode
+            ? 'Ich habe schon ein Konto'
+            : 'Noch kein Konto? Registrieren';
+    }
+
+    if (loginError) loginError.textContent = '';
+}
+
+async function ensureUserProfileForAuthUser(authUserId, email, position) {
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const normalizedPosition = String(position || 'Mitarbeiter').trim() || 'Mitarbeiter';
+
+    const { data: existingByAuthId, error: existingByAuthIdError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('auth_user_id', authUserId)
+        .maybeSingle();
+
+    if (existingByAuthId) {
+        return { profile: existingByAuthId, error: null };
+    }
+
+    if (existingByAuthIdError) {
+        console.warn('Profilsuche per auth_user_id fehlgeschlagen:', existingByAuthIdError.message);
+    }
+
+    const { data: legacyProfile, error: legacyError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', normalizedEmail)
+        .is('auth_user_id', null)
+        .maybeSingle();
+
+    if (legacyError) {
+        return { profile: null, error: legacyError };
+    }
+
+    if (legacyProfile) {
+        const { data: linkedProfile, error: linkError } = await supabase
+            .from('users')
+            .update({
+                auth_user_id: authUserId,
+                position: normalizedPosition
+            })
+            .eq('id', legacyProfile.id)
+            .select('*')
+            .single();
+
+        if (linkError) {
+            return { profile: null, error: linkError };
+        }
+
+        return { profile: linkedProfile, error: null };
+    }
+
+    const profilePayload = {
+        auth_user_id: authUserId,
+        email: normalizedEmail,
+        position: normalizedPosition,
+        created_at: new Date().toISOString()
+    };
+
+    const { data: insertedProfile, error: insertError } = await supabase
+        .from('users')
+        .insert([profilePayload])
+        .select('*')
+        .single();
+
+    if (insertError) {
+        return { profile: null, error: insertError };
+    }
+
+    return { profile: insertedProfile, error: null };
+}
 
 function isOwnerPosition(position) {
     return String(position || '').trim().toLowerCase() === 'inhaber';
@@ -219,6 +309,61 @@ async function handleLogin() {
         console.log('Auth erfolgreich, ID:', data.user.id);
         updateUI(data.user);
     }
+}
+
+async function handleRegister() {
+    const email = String(loginEmail.value || '').trim().toLowerCase();
+    const password = String(loginPass.value || '');
+    const position = String(registerPosition?.value || 'Mitarbeiter');
+
+    if (!email || !password) {
+        loginError.textContent = 'Bitte E-Mail und Passwort angeben.';
+        return;
+    }
+
+    if (password.length < 6) {
+        loginError.textContent = 'Passwort muss mindestens 6 Zeichen haben.';
+        return;
+    }
+
+    const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+            data: {
+                position
+            }
+        }
+    });
+
+    if (error) {
+        loginError.textContent = 'Registrierung fehlgeschlagen: ' + error.message;
+        return;
+    }
+
+    const authUserId = data?.user?.id;
+    if (!authUserId) {
+        loginError.textContent = 'Registrierung abgeschlossen, aber ohne Benutzer-ID. Prüfe Supabase Auth-Einstellungen.';
+        return;
+    }
+
+    const { profile, error: profileError } = await ensureUserProfileForAuthUser(authUserId, email, position);
+    if (profileError || !profile) {
+        console.error('Profil konnte nicht erstellt/verknüpft werden:', profileError);
+        loginError.textContent = 'Konto erstellt, aber Profil fehlt. Bitte Admin kontaktieren.';
+        return;
+    }
+
+    if (position === 'Tänzer*in' && profile.company) {
+        await ensureDancerProduct(profile.id, email, profile.company);
+    }
+
+    if (data.session) {
+        loginError.textContent = 'Registrierung erfolgreich. Du bist jetzt eingeloggt.';
+        return;
+    }
+
+    loginError.textContent = 'Registrierung erfolgreich. Wenn kein Login möglich ist, Email confirmation in Supabase deaktivieren.';
 }
 
 async function handleLogout() {
@@ -774,6 +919,12 @@ async function checkout() {
 // --- INIT ---
 function init() {
     btnLogin.onclick = handleLogin;
+    if (btnRegister) btnRegister.onclick = handleRegister;
+    if (btnToggleAuth) {
+        btnToggleAuth.onclick = () => {
+            setAuthMode(authMode === 'login' ? 'register' : 'login');
+        };
+    }
     btnLogout.onclick = handleLogout;
     btnTipAmount.onclick = () => { tipMode = 'amount'; btnTipAmount.classList.add('active'); btnTipTotal.classList.remove('active'); updateTotalsOnly(); };
     btnTipTotal.onclick = () => { tipMode = 'total'; btnTipTotal.classList.add('active'); btnTipAmount.classList.remove('active'); updateTotalsOnly(); };
@@ -799,5 +950,7 @@ function init() {
         if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') updateUI(session?.user);
         else if (event === 'SIGNED_OUT') updateUI(null);
     });
+
+    setAuthMode('login');
 }
 document.addEventListener('DOMContentLoaded', init);

@@ -335,13 +335,13 @@ function renderUserRowView(tr, u) {
 
     tr.querySelector('.edit-btn').onclick = () => renderUserRowEdit(tr, u);
     tr.querySelector('.del-u').onclick = async () => {
-        if (!confirm('Löschen?')) return;
+        if (!confirm('Mitarbeiter aus Firma entfernen?')) return;
         const company = currentUserProfile?.company;
-        let query = supabase.from('users').delete().eq('id', u.id);
+        let query = supabase.from('users').update({ company: null }).eq('id', u.id);
         if (company) query = query.eq('company', company);
         const { error } = await query;
         if (error) {
-            console.error('[company-settings] delete user failed', error);
+            console.error('[company-settings] detach user from company failed', error);
             return;
         }
         loadAdminUsers();
@@ -377,7 +377,7 @@ function renderUserRowEdit(tr, u) {
 }
 
 async function handleCreateUser() {
-    const email = document.getElementById('u-email').value;
+    const email = String(document.getElementById('u-email').value || '').trim().toLowerCase();
     const position = document.getElementById('u-position').value;
     const company = currentUserProfile?.company;
 
@@ -386,23 +386,97 @@ async function handleCreateUser() {
         return;
     }
 
-    const { data: newUser, error } = await supabase
-        .from('users')
-        .insert([{ email, position, company, created_at: new Date().toISOString() }])
-        .select('id,email')
-        .single();
-
-    if (error) {
-        console.error('[company-settings] create user failed', error);
-        showStatus(staffSettingsStatus, 'Mitarbeiter konnte nicht angelegt werden.', true);
+    if (!email) {
+        showStatus(staffSettingsStatus, 'Bitte eine E-Mail angeben.', true);
         return;
     }
 
-    if (position === 'Tänzer*in') {
-        await ensureDancerProduct(newUser.id, newUser.email, company);
+    const { data: existingUserByEmail, error: existingUserError } = await supabase
+        .from('users')
+        .select('id,email,company')
+        .eq('email', email)
+        .maybeSingle();
+
+    if (existingUserError) {
+        console.error('[company-settings] lookup existing user failed', existingUserError);
+        showStatus(staffSettingsStatus, 'Mitarbeiter konnte nicht geprüft werden.', true);
+        return;
     }
 
-    showStatus(staffSettingsStatus, 'Mitarbeiter angelegt.');
+    let managedUser = null;
+    let actionLabel = 'Mitarbeiter angelegt.';
+
+    if (existingUserByEmail) {
+        const hasNoCompany = existingUserByEmail.company === null || String(existingUserByEmail.company).trim() === '';
+        if (!hasNoCompany) {
+            if (existingUserByEmail.company === company) {
+                const { data: updatedUser, error: updateError } = await supabase
+                    .from('users')
+                    .update({ position })
+                    .eq('id', existingUserByEmail.id)
+                    .select('id,email,company')
+                    .maybeSingle();
+
+                if (updateError) {
+                    console.error('[company-settings] update existing company user failed', updateError);
+                    showStatus(staffSettingsStatus, 'Vorhandener Mitarbeiter konnte nicht aktualisiert werden.', true);
+                    return;
+                }
+
+                if (!updatedUser) {
+                    showStatus(staffSettingsStatus, 'Aktualisierung blockiert (RLS). Bitte Rechte prüfen.', true);
+                    return;
+                }
+
+                managedUser = updatedUser;
+                actionLabel = 'Mitarbeiter existiert bereits und wurde aktualisiert.';
+            } else {
+                showStatus(staffSettingsStatus, `E-Mail ist bereits einer anderen Firma zugewiesen (${existingUserByEmail.company}).`, true);
+                return;
+            }
+        } else {
+            const { data: linkedUser, error: linkError } = await supabase
+                .from('users')
+                .update({ company, position })
+                .eq('id', existingUserByEmail.id)
+                .select('id,email,company')
+                .maybeSingle();
+
+            if (linkError) {
+                console.error('[company-settings] link existing user failed', linkError);
+                showStatus(staffSettingsStatus, 'Vorhandener Mitarbeiter konnte nicht übernommen werden.', true);
+                return;
+            }
+
+            if (!linkedUser || linkedUser.company !== company) {
+                showStatus(staffSettingsStatus, 'Firma konnte nicht zugewiesen werden (RLS/Policy).', true);
+                return;
+            }
+
+            managedUser = linkedUser;
+            actionLabel = 'Mitarbeiter übernommen und Firma zugewiesen.';
+        }
+    } else {
+        const { data: newUser, error } = await supabase
+            .from('users')
+            .insert([{ email, position, company, created_at: new Date().toISOString() }])
+            .select('id,email,company')
+            .single();
+
+        if (error) {
+            console.error('[company-settings] create user failed', error);
+            showStatus(staffSettingsStatus, 'Mitarbeiter konnte nicht angelegt werden.', true);
+            return;
+        }
+
+        managedUser = newUser;
+    }
+
+    if (position === 'Tänzer*in') {
+        await ensureDancerProduct(managedUser.id, managedUser.email, company);
+    }
+
+    showStatus(staffSettingsStatus, actionLabel);
     loadAdminUsers();
 }
 

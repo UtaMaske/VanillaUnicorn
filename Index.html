@@ -11,10 +11,19 @@
     <!-- LOGIN BEREICH -->
     <div id="login-container">
         <div class="login-box">
-            <h1>Kassen-Login</h1>
+            <h1 id="auth-title">Kassen-Login</h1>
             <input type="email" id="login-email" placeholder="E-Mail">
             <input type="password" id="login-password" placeholder="Passwort">
+            <div id="register-fields" style="display: none;">
+                <select id="register-position">
+                    <option value="Mitarbeiter">Mitarbeiter</option>
+                    <option value="Tänzer*in">Tänzer*in</option>
+                    <option value="Türsteher*in">Türsteher*in</option>
+                </select>
+            </div>
             <button id="btn-login">Anmelden</button>
+            <button id="btn-register" style="display: none;">Konto erstellen</button>
+            <button id="btn-toggle-auth" class="nav-btn" style="margin-top: 8px;">Noch kein Konto? Registrieren</button>
             <div id="login-error"></div>
         </div>
     </div>
