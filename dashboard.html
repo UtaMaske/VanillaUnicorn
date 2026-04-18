@@ -66,7 +66,7 @@
                 <!-- Statistik Buttons (Links) -->
                 <button class="tab-btn active" data-tab="tab-statistik">Live Statistik</button>
                 <button class="tab-btn" data-tab="tab-prod-stats">Kauf Statistik</button>
-                <button class="tab-btn" data-tab="tab-tip-payouts">Trinkgeld</button>
+                <button class="tab-btn" data-tab="tab-tagesabschluss">Tagesabschluss</button>
             </div>
             <div class="nav-spacer"></div> <!-- Schiebt den Rest nach rechts -->
             
@@ -137,22 +137,48 @@
             <div id="product-stats-container"></div>
         </div>
 
-        <div id="tab-tip-payouts" class="tab-content">
-            <h2>Trinkgeld je Mitarbeiter</h2>
-            <p class="settings-subtitle">Zeigt den Trinkgeld-Anteil pro Mitarbeiter und den Auszahlungsstatus.</p>
-            <div class="table-wrapper">
-                <table id="tip-payouts-table">
-                    <thead>
-                        <tr>
-                            <th>Mitarbeiter</th>
-                            <th>Position</th>
-                            <th>Trinkgeld ($)</th>
-                            <th>Status</th>
-                            <th>Aktion</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tip-payouts-body"></tbody>
-                </table>
+        <div id="tab-tagesabschluss" class="tab-content">
+            <h2>Tagesabschluss</h2>
+
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #e9ecef;">
+                <h3 style="margin-top: 0;">Kassenprogramm Rechnungen</h3>
+                <p style="margin-top: 0; color: #555;">Erstellt automatisch 2 Rechnungen aus den Transaktionen des gewählten Datums – eine für Bar und eine für Karte (inkl. jeweiligem Trinkgeld).</p>
+                <div id="invoice-export-status" style="margin-bottom: 10px; color: #6c757d;"></div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;">
+                    <div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <strong>Rechnung Bar</strong>
+                            <button id="btn-copy-invoice-cash" class="nav-btn" type="button">Kopieren</button>
+                        </div>
+                        <textarea id="invoice-cash-output" readonly style="width: 100%; min-height: 220px; resize: vertical; border: 1px solid #ddd; border-radius: 6px; padding: 10px; font-family: Consolas, Monaco, monospace; font-size: 13px; box-sizing: border-box;"></textarea>
+                    </div>
+                    <div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <strong>Rechnung Karte</strong>
+                            <button id="btn-copy-invoice-card" class="nav-btn" type="button">Kopieren</button>
+                        </div>
+                        <textarea id="invoice-card-output" readonly style="width: 100%; min-height: 220px; resize: vertical; border: 1px solid #ddd; border-radius: 6px; padding: 10px; font-family: Consolas, Monaco, monospace; font-size: 13px; box-sizing: border-box;"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; border: 1px solid #e9ecef;">
+                <h3 style="margin-top: 0;">Trinkgeld je Mitarbeiter</h3>
+                <p class="settings-subtitle" style="margin-top: 0;">Zeigt den Trinkgeld-Anteil pro Mitarbeiter und den Auszahlungsstatus.</p>
+                <div class="table-wrapper">
+                    <table id="tip-payouts-table">
+                        <thead>
+                            <tr>
+                                <th>Mitarbeiter</th>
+                                <th>Position</th>
+                                <th>Trinkgeld ($)</th>
+                                <th>Status</th>
+                                <th>Aktion</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tip-payouts-body"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
 

@@ -777,6 +777,17 @@ async function checkout() {
         flashButtonFeedback(btnCheckout, 'error');
         return;
     }
+
+    const soldItems = cart.map(item => ({
+        product_id: item.id,
+        name: item.name,
+        category: item.category || null,
+        subcategory: item.subcategory || null,
+        quantity: Number(item.quantity) || 0,
+        unit_price: Number(item.price) || 0,
+        line_total: (Number(item.quantity) || 0) * (Number(item.price) || 0)
+    }));
+
     const transactionData = {
         user_id: transactionUserId, // Nutzt die interne ID (z.B. add6651e...)
         company,
@@ -784,12 +795,19 @@ async function checkout() {
         tip_amount: tipAmount,
         total_amount: finalSub + tipAmount,
         voucher_code: appliedVoucher?.code || null,
-        payment_method: paymentMethod
+        payment_method: paymentMethod,
+        items: soldItems
     };
 
     console.log('Sende Transaktionsdaten an Supabase:', transactionData);
 
-    const { error } = await supabase.from('transactions').insert(transactionData);
+    let { error } = await supabase.from('transactions').insert(transactionData);
+
+    if (error && /column\s+"?items"?|items/i.test(error.message || '')) {
+        const { items, ...fallbackData } = transactionData;
+        const fallbackResult = await supabase.from('transactions').insert(fallbackData);
+        error = fallbackResult.error;
+    }
 
     if (error) { 
         console.error('Supabase Transaction Error:', error);

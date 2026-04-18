@@ -56,6 +56,8 @@ const DEFAULT_COMPANY_SETTINGS = {
     category_tuer_enabled: true
 };
 
+const UNASSIGNED_COMPANY_VALUE = '';
+
 function shortenEmail(email) {
     if (!email || !email.includes('@')) return email || 'Unbekannt';
     const name = email.split('@')[0];
@@ -338,13 +340,15 @@ function renderUserRowView(tr, u) {
     tr.querySelector('.del-u').onclick = async () => {
         if (!confirm('Mitarbeiter aus Firma entfernen?')) return;
         const company = currentUserProfile?.company;
-        let query = supabase.from('users').update({ company: null }).eq('id', u.id);
+        let query = supabase.from('users').update({ company: UNASSIGNED_COMPANY_VALUE }).eq('id', u.id);
         if (company) query = query.eq('company', company);
         const { error } = await query;
         if (error) {
             console.error('[company-settings] detach user from company failed', error);
+            showStatus(staffSettingsStatus, 'Mitarbeiter konnte nicht aus der Firma entfernt werden.', true);
             return;
         }
+        showStatus(staffSettingsStatus, 'Mitarbeiter aus Firma entfernt.');
         loadAdminUsers();
     };
 }

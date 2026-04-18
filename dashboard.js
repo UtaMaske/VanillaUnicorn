@@ -32,6 +32,11 @@ const btnCreateProduct = document.getElementById('btn-create-product');
 const pCategorySelect = document.getElementById('p-category');
 const pSubcatGroup = document.getElementById('p-subcat-group');
 const tipPayoutsBody = document.getElementById('tip-payouts-body');
+const invoiceExportStatus = document.getElementById('invoice-export-status');
+const invoiceCashOutput = document.getElementById('invoice-cash-output');
+const invoiceCardOutput = document.getElementById('invoice-card-output');
+const btnCopyInvoiceCash = document.getElementById('btn-copy-invoice-cash');
+const btnCopyInvoiceCard = document.getElementById('btn-copy-invoice-card');
 
 const statsDateInput = document.getElementById('stats-date');
 const tabBtns = document.querySelectorAll('.tab-btn');
@@ -43,6 +48,8 @@ let productCharts = [];
 let activeProductCat = 'Trinken'; 
 let currentUserProfile = null; 
 let lastSelectedDate = null; // Speichert das letzte ausgewählte Datum 
+let currentTransactionsForView = [];
+let currentDisplayDate = 'Gesamt';
 let companySettings = {
     tip_distribution: 'Aufteilen',
     owner_tip_mode: 'none',
@@ -151,9 +158,180 @@ function getBusinessDate(dateInput) {
     return d.toLocaleDateString('de-DE');
 }
 
+function getPaymentBucket(method) {
+    return method === 'Karte' ? 'Karte' : 'Bar';
+}
+
+function parseTransactionItems(transaction) {
+    const raw = transaction?.items ?? transaction?.cart_items ?? transaction?.items_json ?? null;
+    if (!raw) return [];
+
+    let parsed = raw;
+    if (typeof raw === 'string') {
+        try {
+            parsed = JSON.parse(raw);
+        } catch (_) {
+            return [];
+        }
+    }
+
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+        .map(item => {
+            const name = String(item?.name ?? item?.product_name ?? item?.title ?? '').trim();
+            const quantity = Number(item?.quantity ?? item?.qty ?? item?.count ?? 0);
+            const unitPrice = Number(item?.unit_price ?? item?.price ?? item?.unitPrice ?? NaN);
+            const lineTotal = Number(item?.line_total ?? item?.total ?? item?.lineTotal ?? NaN);
+
+            if (!name || !Number.isFinite(quantity) || quantity <= 0) return null;
+
+            return {
+                name,
+                quantity,
+                unitPrice: Number.isFinite(unitPrice) ? unitPrice : null,
+                lineTotal: Number.isFinite(lineTotal) ? lineTotal : null
+            };
+        })
+        .filter(Boolean);
+}
+
+function aggregateInvoicesByPayment(transactions) {
+    const makeBucket = () => ({
+        subtotal: 0,
+        tips: 0,
+        total: 0,
+        transactionCount: 0,
+        missingItemsTransactions: 0,
+        products: new Map()
+    });
+
+    const grouped = {
+        Bar: makeBucket(),
+        Karte: makeBucket()
+    };
+
+    (transactions || []).forEach(transaction => {
+        const key = getPaymentBucket(transaction?.payment_method);
+        const bucket = grouped[key];
+        bucket.transactionCount += 1;
+        bucket.subtotal += Number(transaction?.subtotal) || 0;
+        bucket.tips += Number(transaction?.tip_amount) || 0;
+        bucket.total += Number(transaction?.total_amount) || 0;
+
+        const items = parseTransactionItems(transaction);
+        if (!items.length) {
+            bucket.missingItemsTransactions += 1;
+            return;
+        }
+
+        items.forEach(item => {
+            if (!bucket.products.has(item.name)) {
+                bucket.products.set(item.name, { quantity: 0, amount: 0, hasAmount: false });
+            }
+
+            const productRow = bucket.products.get(item.name);
+            productRow.quantity += item.quantity;
+
+            let rowAmount = null;
+            if (item.lineTotal !== null) rowAmount = item.lineTotal;
+            else if (item.unitPrice !== null) rowAmount = item.unitPrice * item.quantity;
+
+            if (rowAmount !== null) {
+                productRow.amount += rowAmount;
+                productRow.hasAmount = true;
+            }
+        });
+    });
+
+    return grouped;
+}
+
+function buildInvoiceText(label, displayDate, data) {
+    const lines = [];
+    lines.push(`Rechnung ${label}`);
+    lines.push(`Datum: ${displayDate}`);
+    lines.push('');
+    lines.push('Produkte:');
+
+    const sortedProducts = Array.from(data.products.entries())
+        .map(([name, value]) => ({ name, ...value }))
+        .sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name, 'de'));
+
+    if (!sortedProducts.length) {
+        lines.push('- Keine Produktdaten vorhanden.');
+    } else {
+        sortedProducts.forEach(product => {
+            if (product.hasAmount) lines.push(`- ${product.quantity}x ${product.name} = ${formatPrice(product.amount)}`);
+            else lines.push(`- ${product.quantity}x ${product.name}`);
+        });
+    }
+
+    lines.push('');
+    lines.push(`Zwischensumme Produkte: ${formatPrice(data.subtotal)}`);
+    lines.push(`Trinkgeld: ${formatPrice(data.tips)}`);
+    lines.push(`Gesamtsumme: ${formatPrice(data.total)}`);
+    lines.push(`Transaktionen: ${data.transactionCount}`);
+
+    if (data.missingItemsTransactions > 0) {
+        lines.push('');
+        lines.push(`Hinweis: ${data.missingItemsTransactions} Transaktion(en) ohne gespeicherte Produktliste enthalten.`);
+    }
+
+    return lines.join('\n');
+}
+
+function renderClosingInvoices(transactions, displayDate) {
+    const grouped = aggregateInvoicesByPayment(transactions);
+
+    if (invoiceCashOutput) {
+        invoiceCashOutput.value = buildInvoiceText('Bar', displayDate, grouped.Bar);
+    }
+    if (invoiceCardOutput) {
+        invoiceCardOutput.value = buildInvoiceText('Karte', displayDate, grouped.Karte);
+    }
+
+    const warnings = [];
+    if (grouped.Bar.missingItemsTransactions > 0) warnings.push(`Bar: ${grouped.Bar.missingItemsTransactions} ohne Produktliste`);
+    if (grouped.Karte.missingItemsTransactions > 0) warnings.push(`Karte: ${grouped.Karte.missingItemsTransactions} ohne Produktliste`);
+
+    if (!invoiceExportStatus) return;
+    if (!transactions.length) {
+        invoiceExportStatus.textContent = 'Keine Transaktionen fuer das gewaehlte Datum gefunden.';
+        invoiceExportStatus.style.color = '#6c757d';
+    } else if (warnings.length) {
+        invoiceExportStatus.textContent = `Teilweise unvollstaendige Altdaten: ${warnings.join(' | ')}`;
+        invoiceExportStatus.style.color = '#b54708';
+    } else {
+        invoiceExportStatus.textContent = `Rechnungen fuer ${displayDate} bereit.`;
+        invoiceExportStatus.style.color = '#166534';
+    }
+}
+
+async function copyInvoiceText(textarea, button) {
+    const text = textarea?.value || '';
+    if (!text.trim()) return;
+
+    try {
+        await navigator.clipboard.writeText(text);
+        flashButtonFeedback(button, 'success');
+        if (invoiceExportStatus) {
+            invoiceExportStatus.textContent = 'Rechnung in Zwischenablage kopiert.';
+            invoiceExportStatus.style.color = '#166534';
+        }
+    } catch (e) {
+        console.error('Kopieren fehlgeschlagen:', e);
+        flashButtonFeedback(button, 'error');
+        if (invoiceExportStatus) {
+            invoiceExportStatus.textContent = 'Kopieren fehlgeschlagen. Bitte Text manuell markieren und kopieren.';
+            invoiceExportStatus.style.color = '#b91c1c';
+        }
+    }
+}
+
 function applyDashboardRoleVisibility(profile) {
     const isOwner = isOwnerPosition(profile?.position);
-    const ownerTabIds = ['tab-produkte', 'tab-tip-payouts'];
+    const ownerTabIds = ['tab-produkte', 'tab-tagesabschluss'];
 
     ownerTabIds.forEach(tabId => {
         const tabBtn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
@@ -654,6 +832,14 @@ function init() {
         };
     }
 
+    if (btnCopyInvoiceCash) {
+        btnCopyInvoiceCash.onclick = () => copyInvoiceText(invoiceCashOutput, btnCopyInvoiceCash);
+    }
+
+    if (btnCopyInvoiceCard) {
+        btnCopyInvoiceCard.onclick = () => copyInvoiceText(invoiceCardOutput, btnCopyInvoiceCard);
+    }
+
     if (btnCreateProduct) btnCreateProduct.onclick = handleCreateProduct;
     if (pCategorySelect) {
         pCategorySelect.onchange = () => {
@@ -725,6 +911,7 @@ async function loadStats(currentUserProfile, targetDate = null) {
     let displayDate = targetDate === 'all' ? 'Gesamt' : (targetDate || getBusinessDate(new Date()));
     const today = displayDate;
     const transactions = allTransactions.filter(t => isOwner || t.user_id === currentUserProfile.id);
+    const transactionsForInvoice = [];
 
     let todaySales = 0, todayTips = 0, todayBarSales = 0, todayCardTips = 0;
     const stats = {}, hourlyStats = {}, dailyHourlyStats = {};
@@ -741,6 +928,7 @@ async function loadStats(currentUserProfile, targetDate = null) {
     transactions.forEach(t => {
         const transDate = getBusinessDate(t.created_at);
         if (today === 'Gesamt' || transDate === today) {
+            transactionsForInvoice.push(t);
             todaySales += t.subtotal;
             todayTips += t.tip_amount;
             if (t.payment_method === 'Bar') todayBarSales += t.subtotal;
@@ -790,6 +978,10 @@ async function loadStats(currentUserProfile, targetDate = null) {
             };
         });
     }
+
+    currentTransactionsForView = transactionsForInvoice;
+    currentDisplayDate = today;
+    renderClosingInvoices(currentTransactionsForView, currentDisplayDate);
 
     if (totalSalesAll) totalSalesAll.textContent = formatPrice(todaySales);
     if (totalTipsAll) totalTipsAll.textContent = formatPrice(todayTips);
