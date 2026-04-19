@@ -78,10 +78,7 @@ const employeeListDiv = document.getElementById('employee-list');
 const btnCloseModal = document.getElementById('btn-close-modal');
 
 const essenProdukteDiv = document.getElementById('essen-produkte');
-const trinkenShotsDiv = document.getElementById('trinken-shots');
-const trinkenCocktailsDiv = document.getElementById('trinken-cocktails');
-const trinkenHartalkDiv = document.getElementById('trinken-hartalk');
-const trinkenNonalkDiv = document.getElementById('trinken-nonalk');
+const trinkenSubcategoriesGrid = document.getElementById('trinken-subkategorien');
 const privatProdukteDiv = document.getElementById('privat-produkte');
 const tuerProdukteDiv = document.getElementById('tuer-produkte');
 const cartItemsUl = document.getElementById('cart-items');
@@ -463,15 +460,44 @@ async function fetchProducts() {
 function renderProducts() {
     const isDoorStaff = currentUserProfile?.position === 'Türsteher*in';
     const isOwner = currentUserProfile?.position === 'Inhaber';
+    const preferredSubcategoriesByCategory = {
+        Trinken: ['Shots', 'Cocktails', 'HartAlk', 'NonAlk'],
+        Essen: [],
+        Privat: [],
+        Tür: []
+    };
+    const normalizeSubcategory = (value) => {
+        const normalized = String(value || '').trim();
+        return normalized || 'Sonstiges';
+    };
 
-    // Clear all lists
-    essenProdukteDiv.innerHTML = '';
-    trinkenShotsDiv.innerHTML = '';
-    trinkenCocktailsDiv.innerHTML = '';
-    trinkenHartalkDiv.innerHTML = '';
-    trinkenNonalkDiv.innerHTML = '';
-    privatProdukteDiv.innerHTML = '';
-    if (tuerProdukteDiv) tuerProdukteDiv.innerHTML = '';
+    const categoryRootByName = {
+        Essen: essenProdukteDiv,
+        Trinken: trinkenSubcategoriesGrid,
+        Privat: privatProdukteDiv,
+        Tür: tuerProdukteDiv
+    };
+
+    const visibleProductsByCategory = {
+        Essen: [],
+        Trinken: [],
+        Privat: [],
+        Tür: []
+    };
+
+    const createProductElement = (product) => {
+        const div = document.createElement('div');
+        div.className = 'produkt-item';
+        div.innerHTML = `<span>${product.name}</span><span>${Math.round(product.price)} $</span>`;
+        div.onclick = () => {
+            if (product.category === 'Privat') {
+                openEmployeeModal(product);
+            } else {
+                addToCart(product);
+            }
+        };
+        return div;
+    };
 
     products.forEach(p => {
         if (p.category === 'Tänzer*innen') return;
@@ -479,60 +505,103 @@ function renderProducts() {
         if (isDoorStaff && p.category !== 'Tür') return;
         if (!isDoorStaff && !isOwner && p.category === 'Tür') return;
 
-        const div = document.createElement('div');
-        div.className = 'produkt-item';
-        div.innerHTML = `<span>${p.name}</span><span>${Math.round(p.price)} $</span>`;
-        div.onclick = () => {
-            if (p.category === 'Privat') {
-                openEmployeeModal(p);
-            } else {
-                addToCart(p);
-            }
-        };
-
-        if (p.category === 'Essen') {
-            essenProdukteDiv.appendChild(div);
-        } else if (p.category === 'Trinken') {
-            if (p.subcategory === 'Shots') trinkenShotsDiv.appendChild(div);
-            else if (p.subcategory === 'Cocktails') trinkenCocktailsDiv.appendChild(div);
-            else if (p.subcategory === 'HartAlk') trinkenHartalkDiv.appendChild(div);
-            else if (p.subcategory === 'NonAlk') trinkenNonalkDiv.appendChild(div);
-            else {
-                // Fallback: If no subcategory, put in NonAlk or handle differently
-                trinkenNonalkDiv.appendChild(div);
-            }
-        } else if (p.category === 'Privat') {
-            privatProdukteDiv.appendChild(div);
-        } else if (p.category === 'Tür' && tuerProdukteDiv) {
-            tuerProdukteDiv.appendChild(div);
+        if (visibleProductsByCategory[p.category]) {
+            visibleProductsByCategory[p.category].push({
+                product: p,
+                subcategory: normalizeSubcategory(p.subcategory),
+                element: createProductElement(p)
+            });
         }
+    });
+
+    const hasAnyByCategory = { Essen: false, Trinken: false, Privat: false, Tür: false };
+
+    Object.entries(categoryRootByName).forEach(([category, root]) => {
+        if (!root) return;
+        root.innerHTML = '';
+
+        const rows = visibleProductsByCategory[category] || [];
+        hasAnyByCategory[category] = rows.length > 0;
+
+        if (rows.length === 0) {
+            root.classList.remove('subkategorie-grid', 'subcategory-stacked');
+            root.classList.add('produkt-liste');
+            return;
+        }
+
+        const grouped = new Map();
+        rows.forEach(row => {
+            if (!grouped.has(row.subcategory)) grouped.set(row.subcategory, []);
+            grouped.get(row.subcategory).push(row.element);
+        });
+
+        const hasDifferentSubcategories = grouped.size > 1;
+
+        if (!hasDifferentSubcategories) {
+            root.classList.remove('subkategorie-grid', 'subcategory-stacked');
+            root.classList.add('produkt-liste');
+            rows.forEach(row => root.appendChild(row.element));
+            return;
+        }
+
+        root.classList.remove('produkt-liste');
+        root.classList.add('subkategorie-grid', 'subcategory-stacked');
+
+        const preferred = preferredSubcategoriesByCategory[category] || [];
+        const sortedSubcategories = Array.from(grouped.keys()).sort((aName, bName) => {
+            const aIndex = preferred.indexOf(aName);
+            const bIndex = preferred.indexOf(bName);
+            const aPreferred = aIndex !== -1;
+            const bPreferred = bIndex !== -1;
+
+            if (aPreferred && bPreferred) return aIndex - bIndex;
+            if (aPreferred) return -1;
+            if (bPreferred) return 1;
+            return aName.localeCompare(bName, 'de');
+        });
+
+        sortedSubcategories.forEach(subcategoryName => {
+            const block = document.createElement('div');
+            block.className = 'subkategorie-block';
+
+            const heading = document.createElement('h4');
+            heading.textContent = subcategoryName;
+
+            const list = document.createElement('div');
+            list.className = 'produkt-liste subcategory-items-vertical';
+            grouped.get(subcategoryName).forEach(itemEl => list.appendChild(itemEl));
+
+            block.appendChild(heading);
+            block.appendChild(list);
+            root.appendChild(block);
+        });
     });
 
     // Hide categories/subcategories that have no products
     const essenSection = document.getElementById('essen-kategorie');
-    if (essenSection) essenSection.style.display = (companySettings.category_essen_enabled && essenProdukteDiv.children.length) ? '' : 'none';
+    if (essenSection) {
+        const hasAnyEssen = hasAnyByCategory.Essen;
+        essenSection.style.display = (companySettings.category_essen_enabled && hasAnyEssen) ? '' : 'none';
+    }
 
     const trinkenSection = document.getElementById('trinken-kategorie');
-    const shotsBlock = trinkenShotsDiv.closest('.subkategorie-block');
-    const cocktailsBlock = trinkenCocktailsDiv.closest('.subkategorie-block');
-    const hartalkBlock = trinkenHartalkDiv.closest('.subkategorie-block');
-    const nonalkBlock = trinkenNonalkDiv.closest('.subkategorie-block');
-
-    if (shotsBlock) shotsBlock.style.display = trinkenShotsDiv.children.length ? '' : 'none';
-    if (cocktailsBlock) cocktailsBlock.style.display = trinkenCocktailsDiv.children.length ? '' : 'none';
-    if (hartalkBlock) hartalkBlock.style.display = trinkenHartalkDiv.children.length ? '' : 'none';
-    if (nonalkBlock) nonalkBlock.style.display = trinkenNonalkDiv.children.length ? '' : 'none';
 
     if (trinkenSection) {
-        const hasAnyTrinken = [trinkenShotsDiv, trinkenCocktailsDiv, trinkenHartalkDiv, trinkenNonalkDiv].some(div => div.children.length);
+        const hasAnyTrinken = hasAnyByCategory.Trinken;
         trinkenSection.style.display = (companySettings.category_trinken_enabled && hasAnyTrinken) ? '' : 'none';
     }
 
     const privatSection = document.getElementById('privat-kategorie');
-    if (privatSection) privatSection.style.display = (companySettings.category_privat_enabled && privatProdukteDiv.children.length) ? '' : 'none';
+    if (privatSection) {
+        const hasAnyPrivat = hasAnyByCategory.Privat;
+        privatSection.style.display = (companySettings.category_privat_enabled && hasAnyPrivat) ? '' : 'none';
+    }
 
     const tuerSection = document.getElementById('tuer-kategorie');
-    if (tuerSection) tuerSection.style.display = (companySettings.category_tuer_enabled && tuerProdukteDiv && tuerProdukteDiv.children.length) ? '' : 'none';
+    if (tuerSection) {
+        const hasAnyTuer = hasAnyByCategory.Tür;
+        tuerSection.style.display = (companySettings.category_tuer_enabled && hasAnyTuer) ? '' : 'none';
+    }
 
     if (isDoorStaff) {
         if (essenSection) essenSection.style.display = 'none';

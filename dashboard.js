@@ -31,6 +31,9 @@ const productsBody = document.getElementById('products-body');
 const btnCreateProduct = document.getElementById('btn-create-product');
 const pCategorySelect = document.getElementById('p-category');
 const pSubcatGroup = document.getElementById('p-subcat-group');
+const pSubcategorySelect = document.getElementById('p-subcategory');
+const pCustomSubcatGroup = document.getElementById('p-custom-subcat-group');
+const pCustomSubcategoryInput = document.getElementById('p-custom-subcategory');
 const tipPayoutsBody = document.getElementById('tip-payouts-body');
 const invoiceExportStatus = document.getElementById('invoice-export-status');
 const invoiceCashOutput = document.getElementById('invoice-cash-output');
@@ -39,6 +42,9 @@ const btnCopyInvoiceCash = document.getElementById('btn-copy-invoice-cash');
 const btnCopyInvoiceCard = document.getElementById('btn-copy-invoice-card');
 
 const statsDateInput = document.getElementById('stats-date');
+const allDaysModeToggle = document.getElementById('all-days-mode-toggle');
+const btnAllDaysSum = document.getElementById('btn-all-days-sum');
+const btnAllDaysAvg = document.getElementById('btn-all-days-avg');
 const tabBtns = document.querySelectorAll('.tab-btn');
 const tabContents = document.querySelectorAll('.tab-content');
 
@@ -50,6 +56,7 @@ let currentUserProfile = null;
 let lastSelectedDate = null; // Speichert das letzte ausgewählte Datum 
 let currentTransactionsForView = [];
 let currentDisplayDate = 'Gesamt';
+let allDaysAggregationMode = 'sum';
 let companySettings = {
     tip_distribution: 'Aufteilen',
     owner_tip_mode: 'none',
@@ -64,6 +71,13 @@ let companySettings = {
     category_tuer_enabled: true
 };
 const buttonFeedbackTimeouts = new Map();
+const PRODUCT_CATEGORIES_WITH_SUBCATEGORIES = ['Trinken', 'Essen', 'Privat', 'Tür'];
+let availableSubcategoriesByCategory = {
+    Trinken: [],
+    Essen: [],
+    Privat: [],
+    Tür: []
+};
 
 // --- HILFSFUNKTIONEN ---
 function formatPrice(val) {
@@ -76,6 +90,92 @@ function clampNumber(value, min, max, fallback = 0) {
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
     return Math.min(max, Math.max(min, n));
+}
+
+function normalizeSubcategoryValue(value) {
+    return String(value || '').trim();
+}
+
+function ensureCategorySubcategoryBucket(category) {
+    if (!availableSubcategoriesByCategory[category]) {
+        availableSubcategoriesByCategory[category] = [];
+    }
+}
+
+function mergeSubcategoriesForCategory(category, values) {
+    ensureCategorySubcategoryBucket(category);
+    const map = new Map();
+    const current = availableSubcategoriesByCategory[category] || [];
+
+    current.forEach(item => {
+        const normalized = normalizeSubcategoryValue(item);
+        if (!normalized) return;
+        const key = normalized.toLowerCase();
+        if (!map.has(key)) map.set(key, normalized);
+    });
+
+    (values || []).forEach(item => {
+        const normalized = normalizeSubcategoryValue(item);
+        if (!normalized) return;
+        const key = normalized.toLowerCase();
+        if (!map.has(key)) map.set(key, normalized);
+    });
+
+    availableSubcategoriesByCategory[category] = Array.from(map.values());
+}
+
+function resetAvailableSubcategories() {
+    availableSubcategoriesByCategory = {
+        Trinken: [],
+        Essen: [],
+        Privat: [],
+        Tür: []
+    };
+}
+
+function updateCustomSubcategoryVisibility() {
+    const hasCategory = Boolean(pCategorySelect?.value);
+    const isCustom = pSubcategorySelect?.value === 'custom';
+    if (pSubcatGroup) pSubcatGroup.style.display = hasCategory ? '' : 'none';
+    if (pCustomSubcatGroup) pCustomSubcatGroup.style.display = (hasCategory && isCustom) ? '' : 'none';
+}
+
+function rebuildSubcategorySelect(category = null, selectedValue = null) {
+    if (!pSubcategorySelect) return;
+    const selectedCategory = category || pCategorySelect?.value;
+    const preferred = normalizeSubcategoryValue(selectedValue);
+
+    pSubcategorySelect.innerHTML = '';
+    const noneOption = document.createElement('option');
+    noneOption.value = '';
+    noneOption.textContent = 'Keine';
+    pSubcategorySelect.appendChild(noneOption);
+
+    ensureCategorySubcategoryBucket(selectedCategory);
+    const categorySubcategories = availableSubcategoriesByCategory[selectedCategory] || [];
+
+    categorySubcategories.forEach(subcat => {
+        const option = document.createElement('option');
+        option.value = subcat;
+        option.textContent = subcat;
+        pSubcategorySelect.appendChild(option);
+    });
+
+    const customOption = document.createElement('option');
+    customOption.value = 'custom';
+    customOption.textContent = 'Custom...';
+    pSubcategorySelect.appendChild(customOption);
+
+    if (preferred && categorySubcategories.some(s => s.toLowerCase() === preferred.toLowerCase())) {
+        const match = categorySubcategories.find(s => s.toLowerCase() === preferred.toLowerCase());
+        pSubcategorySelect.value = match;
+    } else if (categorySubcategories.length) {
+        pSubcategorySelect.value = categorySubcategories[0];
+    } else {
+        pSubcategorySelect.value = '';
+    }
+
+    updateCustomSubcategoryVisibility();
 }
 
 function flashButtonFeedback(button, state, duration = 1000) {
@@ -397,6 +497,7 @@ function applyProductCreateCategoryVisibility() {
         pCategorySelect.disabled = true;
         if (btnCreateProduct) btnCreateProduct.disabled = true;
         if (pSubcatGroup) pSubcatGroup.style.display = 'none';
+        if (pCustomSubcatGroup) pCustomSubcatGroup.style.display = 'none';
         return;
     }
 
@@ -412,7 +513,8 @@ function applyProductCreateCategoryVisibility() {
 
     const selectedCategory = enabledCategories.includes(previousSelection) ? previousSelection : enabledCategories[0];
     pCategorySelect.value = selectedCategory;
-    if (pSubcatGroup) pSubcatGroup.style.display = selectedCategory === 'Trinken' ? '' : 'none';
+    rebuildSubcategorySelect(selectedCategory);
+    updateCustomSubcategoryVisibility();
 }
 
 async function ensureDancerProduct(userId, email, company) {
@@ -709,6 +811,23 @@ function calculateTipSplit(totalTips, staffParticipantCount) {
     };
 }
 
+function updateAllDaysModeToggleVisibility() {
+    if (!allDaysModeToggle || !statsDateInput) return;
+    const isAllDays = statsDateInput.value === 'Gesamt';
+    allDaysModeToggle.style.display = isAllDays ? 'inline-flex' : 'none';
+}
+
+function updateAllDaysModeButtons() {
+    if (!btnAllDaysSum || !btnAllDaysAvg) return;
+    btnAllDaysSum.classList.toggle('active', allDaysAggregationMode === 'sum');
+    btnAllDaysAvg.classList.toggle('active', allDaysAggregationMode === 'avg');
+}
+
+function setAllDaysAggregationMode(mode) {
+    allDaysAggregationMode = mode === 'avg' ? 'avg' : 'sum';
+    updateAllDaysModeButtons();
+}
+
 // --- INITIALISIERUNG ---
 
 function init() {
@@ -776,6 +895,26 @@ function init() {
         const today = getBusinessDate(new Date());
         statsDateInput.value = today;
         lastSelectedDate = today; // Initiales Datum speichern
+        updateAllDaysModeToggleVisibility();
+        updateAllDaysModeButtons();
+
+        if (btnAllDaysSum) {
+            btnAllDaysSum.onclick = () => {
+                if (allDaysAggregationMode === 'sum' || statsDateInput.value !== 'Gesamt') return;
+                setAllDaysAggregationMode('sum');
+                loadStats(currentUserProfile, 'all');
+                loadProductStats('Gesamt');
+            };
+        }
+
+        if (btnAllDaysAvg) {
+            btnAllDaysAvg.onclick = () => {
+                if (allDaysAggregationMode === 'avg' || statsDateInput.value !== 'Gesamt') return;
+                setAllDaysAggregationMode('avg');
+                loadStats(currentUserProfile, 'all');
+                loadProductStats('Gesamt');
+            };
+        }
         
         document.getElementById('btn-prev-day').onclick = () => {
             const currentValue = statsDateInput.value;
@@ -795,6 +934,7 @@ function init() {
             const newDate = current.toLocaleDateString('de-DE');
             statsDateInput.value = newDate;
             lastSelectedDate = newDate; // Neues Datum speichern
+            updateAllDaysModeToggleVisibility();
             loadStats(currentUserProfile, newDate);
             loadProductStats(newDate);
         };
@@ -817,6 +957,7 @@ function init() {
             const newDate = current.toLocaleDateString('de-DE');
             statsDateInput.value = newDate;
             lastSelectedDate = newDate; // Neues Datum speichern
+            updateAllDaysModeToggleVisibility();
             loadStats(currentUserProfile, newDate);
             loadProductStats(newDate);
         };
@@ -827,6 +968,7 @@ function init() {
                 lastSelectedDate = statsDateInput.value;
             }
             statsDateInput.value = 'Gesamt';
+            updateAllDaysModeToggleVisibility();
             loadStats(currentUserProfile, 'all');
             loadProductStats('Gesamt');
         };
@@ -841,9 +983,14 @@ function init() {
     }
 
     if (btnCreateProduct) btnCreateProduct.onclick = handleCreateProduct;
+    if (pSubcategorySelect) {
+        rebuildSubcategorySelect(pCategorySelect?.value || null);
+        pSubcategorySelect.onchange = () => updateCustomSubcategoryVisibility();
+    }
     if (pCategorySelect) {
         pCategorySelect.onchange = () => {
-            if (pSubcatGroup) pSubcatGroup.style.display = pCategorySelect.value === 'Trinken' ? '' : 'none';
+            rebuildSubcategorySelect(pCategorySelect.value);
+            updateCustomSubcategoryVisibility();
         };
     }
     if (btnCreateVoucher) btnCreateVoucher.onclick = handleCreateVoucher;
@@ -1012,9 +1159,10 @@ async function loadStats(currentUserProfile, targetDate = null) {
     await renderTipPayoutTable(stats, today, tipSplit);
 
     let chartData;
+    let chartMode = 'day';
     if (today === 'Gesamt') {
-        // Bei Gesamt-Ansicht: Berechne Durchschnitt und Maximum pro 10-Minuten-Intervall
-        chartData = calculateAverageMaxStats(dailyHourlyStats);
+        chartData = calculateAllDaysStats(dailyHourlyStats, allDaysAggregationMode);
+        chartMode = allDaysAggregationMode === 'avg' ? 'all-avg' : 'all-sum';
     } else {
         // Bei Tages-Ansicht: Normale stündliche Daten
         const sortedHours = Object.keys(hourlyStats).sort();
@@ -1024,10 +1172,10 @@ async function loadStats(currentUserProfile, targetDate = null) {
             tips: sortedHours.map(h => hourlyStats[h].tips)
         };
     }
-    renderChart(chartData.labels, chartData.sales, chartData.tips, chartData.avgSales, chartData.maxSales, chartData.avgTips, chartData.maxTips, today === 'Gesamt');
+    renderChart(chartData.labels, chartData.sales, chartData.tips, chartMode);
 }
 
-function calculateAverageMaxStats(dailyHourlyStats) {
+function calculateAllDaysStats(dailyHourlyStats, mode = 'sum') {
     // Sammle alle möglichen 10-Minuten-Intervalle
     const allHours = new Set();
     Object.values(dailyHourlyStats).forEach(dayStats => {
@@ -1035,53 +1183,49 @@ function calculateAverageMaxStats(dailyHourlyStats) {
     });
     
     const sortedHours = Array.from(allHours).sort();
-    const avgSales = [], maxSales = [], avgTips = [], maxTips = [];
+    const valuesSales = [], valuesTips = [];
     
     sortedHours.forEach(hour => {
-        let totalSales = 0, totalTips = 0, dayCount = 0, maxSalesValue = 0, maxTipsValue = 0;
+        let totalSales = 0, totalTips = 0, dayCount = 0;
         
         // Gehe durch alle Tage für diese Stunde
         Object.values(dailyHourlyStats).forEach(dayStats => {
             if (dayStats[hour]) {
                 totalSales += dayStats[hour].sales;
                 totalTips += dayStats[hour].tips;
-                maxSalesValue = Math.max(maxSalesValue, dayStats[hour].sales);
-                maxTipsValue = Math.max(maxTipsValue, dayStats[hour].tips);
                 dayCount++;
             }
         });
-        
-        // Berechne Durchschnitt (nur wenn Daten vorhanden)
-        avgSales.push(dayCount > 0 ? totalSales / dayCount : 0);
-        avgTips.push(dayCount > 0 ? totalTips / dayCount : 0);
-        maxSales.push(maxSalesValue);
-        maxTips.push(maxTipsValue);
+
+        if (mode === 'avg') {
+            valuesSales.push(dayCount > 0 ? totalSales / dayCount : 0);
+            valuesTips.push(dayCount > 0 ? totalTips / dayCount : 0);
+        } else {
+            valuesSales.push(totalSales);
+            valuesTips.push(totalTips);
+        }
     });
     
     return {
         labels: sortedHours,
-        sales: avgSales, // Durchschnittlicher Umsatz pro 10-Minuten-Intervall
-        tips: avgTips, // Durchschnittliches Trinkgeld pro 10-Minuten-Intervall
-        avgSales: avgSales,
-        maxSales: maxSales,
-        avgTips: avgTips,
-        maxTips: maxTips
+        sales: valuesSales,
+        tips: valuesTips
     };
 }
 
-function renderChart(labels, sales, tips, avgSales = null, maxSales = null, avgTips = null, maxTips = null, isAllDays = false) {
+function renderChart(labels, sales, tips, chartMode = 'day') {
     const ctx = document.getElementById('hourly-sales-chart')?.getContext('2d');
     if (!ctx) return;
     if (hourlyChart) hourlyChart.destroy();
 
     const datasets = [];
+    const isAllDays = chartMode === 'all-sum' || chartMode === 'all-avg';
 
     if (isAllDays) {
-        // Bei Gesamt-Ansicht: Zeige Durchschnitt und Maximum für Umsatz und Trinkgeld
         datasets.push(
             {
-                label: 'Ø Umsatz pro 10 Min',
-                data: avgSales || sales,
+                label: chartMode === 'all-avg' ? 'Ø Umsatz pro 10 Min' : 'Umsatz gesamt pro 10 Min',
+                data: sales,
                 borderColor: '#0056b3',
                 backgroundColor: 'rgba(0, 86, 179, 0.1)',
                 fill: true,
@@ -1090,18 +1234,8 @@ function renderChart(labels, sales, tips, avgSales = null, maxSales = null, avgT
                 borderWidth: 3
             },
             {
-                label: 'Max Umsatz pro 10 Min',
-                data: maxSales,
-                borderColor: '#dc3545',
-                backgroundColor: 'rgba(220, 53, 69, 0.1)',
-                fill: true,
-                tension: 0.4,
-                pointRadius: 3,
-                borderWidth: 3
-            },
-            {
-                label: 'Ø Trinkgeld pro 10 Min',
-                data: avgTips || tips,
+                label: chartMode === 'all-avg' ? 'Ø Trinkgeld pro 10 Min' : 'Trinkgeld gesamt pro 10 Min',
+                data: tips,
                 borderColor: '#ff6b35',
                 backgroundColor: 'rgba(255, 107, 53, 0.1)',
                 fill: false,
@@ -1110,20 +1244,6 @@ function renderChart(labels, sales, tips, avgSales = null, maxSales = null, avgT
                 borderWidth: 2,
                 borderDash: [8, 4],
                 pointBackgroundColor: '#ff6b35',
-                pointBorderColor: '#fff',
-                pointBorderWidth: 2
-            },
-            {
-                label: 'Max Trinkgeld pro 10 Min',
-                data: maxTips,
-                borderColor: '#6f42c1',
-                backgroundColor: 'rgba(111, 66, 193, 0.1)',
-                fill: false,
-                tension: 0.4,
-                pointRadius: 4,
-                borderWidth: 2,
-                borderDash: [8, 4],
-                pointBackgroundColor: '#6f42c1',
                 pointBorderColor: '#fff',
                 pointBorderWidth: 2
             }
@@ -1172,10 +1292,23 @@ async function loadProducts() {
     if (!company) return;
     let query = supabase.from('products').select('*').eq('company', company).order('category');
     const { data: products } = await query;
+    const productList = products || [];
+
+    resetAvailableSubcategories();
+    PRODUCT_CATEGORIES_WITH_SUBCATEGORIES.forEach(category => {
+        const subcategoriesFromProducts = productList
+            .filter(p => p?.category === category)
+            .map(p => p?.subcategory)
+            .filter(Boolean)
+            .map(normalizeSubcategoryValue)
+            .filter(Boolean);
+        mergeSubcategoriesForCategory(category, subcategoriesFromProducts);
+    });
+    rebuildSubcategorySelect(pCategorySelect?.value || null);
 
     if (productsBody) {
         productsBody.innerHTML = '';
-        products.forEach(p => {
+        productList.forEach(p => {
             const tr = document.createElement('tr');
             renderProductRowView(tr, p);
             productsBody.appendChild(tr);
@@ -1217,7 +1350,7 @@ function renderProductRowEdit(tr, p) {
     const storedEk = p.ek ?? p.EK; // handle both lowercase and uppercase column names
     const ek = (storedEk !== undefined && storedEk !== null && storedEk !== '') ? Number(storedEk) : '';
 
-    tr.innerHTML = `<td><input type="text" value="${p.name}" class="edit-name"></td><td><select class="edit-cat">${catOptions}</select></td><td>-</td><td><input type="number" step="0.01" value="${price}" class="edit-price"></td><td><input type="number" step="0.01" value="${ek}" class="edit-ek" placeholder="(optional)"></td><td>-</td>
+    tr.innerHTML = `<td><input type="text" value="${p.name}" class="edit-name"></td><td><select class="edit-cat">${catOptions}</select></td><td><input type="text" value="${p.subcategory || ''}" class="edit-subcat" placeholder="(optional)"></td><td><input type="number" step="0.01" value="${price}" class="edit-price"></td><td><input type="number" step="0.01" value="${ek}" class="edit-ek" placeholder="(optional)"></td><td>-</td>
         <td><button class="save-btn">💾</button><button class="cancel-btn">❌</button></td>`;
     tr.querySelector('.cancel-btn').onclick = () => renderProductRowView(tr, p);
     tr.querySelector('.save-btn').onclick = async () => {
@@ -1229,8 +1362,10 @@ function renderProductRowEdit(tr, p) {
         const ekInput = tr.querySelector('.edit-ek').value;
         const ekParsed = parseFloat(ekInput);
         const ek = ekInput.trim() === '' ? null : (Number.isFinite(ekParsed) ? ekParsed : null);
+        const subcategoryInput = tr.querySelector('.edit-subcat').value;
+        const subcategory = normalizeSubcategoryValue(subcategoryInput) || null;
 
-        const updateData = { name, category, price, EK: ek };
+        const updateData = { name, category, subcategory, price, EK: ek };
 
         try {
             const company = currentUserProfile?.company;
@@ -1248,7 +1383,7 @@ function renderProductRowEdit(tr, p) {
             // If the product belongs to Essen or Trinken, update storage rows that reference the old product name
             try {
                 if (company && ['Essen', 'Trinken'].includes(category)) {
-                    const newSubcat = category === 'Trinken' ? (p.subcategory || '') : null;
+                    const newSubcat = subcategory;
                     const storageUpdate = { name, category, subcategory: newSubcat };
                     const { error: sErr } = await supabase.from('storage').update(storageUpdate).eq('name', p.name).eq('company', company);
                     if (sErr) console.warn('Could not update storage rows for product edit', sErr);
@@ -1280,7 +1415,20 @@ async function handleCreateProduct() {
         flashButtonFeedback(saveButton, 'error');
         return;
     }
-    const subcategory = category === 'Trinken' ? document.getElementById('p-subcategory').value : null;
+    let subcategory = null;
+    const selectedSubcategory = pSubcategorySelect ? pSubcategorySelect.value : '';
+    if (selectedSubcategory === 'custom') {
+        const customSubcategory = normalizeSubcategoryValue(pCustomSubcategoryInput?.value);
+        if (!customSubcategory) {
+            flashButtonFeedback(saveButton, 'error');
+            if (pCustomSubcategoryInput) pCustomSubcategoryInput.focus();
+            return;
+        }
+        subcategory = customSubcategory;
+        if (pCustomSubcategoryInput) pCustomSubcategoryInput.value = '';
+    } else {
+        subcategory = normalizeSubcategoryValue(selectedSubcategory) || null;
+    }
 
     const insertData = { name, price, category, subcategory, company: currentUserProfile?.company || null };
     if (ek !== null) insertData.EK = ek; // match schema column name
@@ -1411,6 +1559,16 @@ async function loadProductStats(selectedDate = null) {
     const salesRows = sales || [];
     const productsList = products || [];
     const countByProductId = {};
+    const isAllDaysSelection = !selectedIsoDate;
+    const useAveragePerDay = isAllDaysSelection && allDaysAggregationMode === 'avg';
+    const allSalesDays = new Set();
+
+    if (isAllDaysSelection) {
+        salesRows.forEach(row => {
+            if (row?.date) allSalesDays.add(String(row.date));
+        });
+    }
+    const averageDivisor = allSalesDays.size > 0 ? allSalesDays.size : 1;
 
     salesRows.forEach(row => {
         if (!row?.product_id) return;
@@ -1422,9 +1580,11 @@ async function loadProductStats(selectedDate = null) {
         if (!allowedCategories.has(product.category)) return;
         if (activeProductCat !== 'all' && product.category !== activeProductCat) return;
         if (!groups[product.category]) groups[product.category] = [];
+        const rawCount = countByProductId[product.id] || 0;
+        const computedCount = useAveragePerDay ? (rawCount / averageDivisor) : rawCount;
         groups[product.category].push({
             name: product.name,
-            count: countByProductId[product.id] || 0
+            count: Math.ceil(Math.max(0, computedCount))
         });
     });
 
@@ -1437,7 +1597,38 @@ async function loadProductStats(selectedDate = null) {
         const ctx = document.getElementById(`chart-${cat}`).getContext('2d');
         const labels = groups[cat].map(i => i.name);
         const counts = groups[cat].map(i => Number(i.count) || 0);
-        productCharts.push(new Chart(ctx, { type: 'bar', data: { labels, datasets: [{ label: 'Sales', data: counts, backgroundColor: '#0056b3' }] }, options: { indexAxis: 'y', plugins: { legend: { display: false } } } }));
+        const datasetLabel = useAveragePerDay ? 'Ø Sales pro Tag' : 'Sales';
+        productCharts.push(new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [{ label: datasetLabel, data: counts, backgroundColor: '#0056b3' }]
+            },
+            options: {
+                indexAxis: 'y',
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: (context) => {
+                                const value = Number(context.parsed.x) || 0;
+                                return `${datasetLabel}: ${Math.ceil(Math.max(0, value))}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: {
+                            callback: (value) => {
+                                const n = Number(value) || 0;
+                                return Math.ceil(Math.max(0, n));
+                            }
+                        }
+                    }
+                }
+            }
+        }));
     });
 }
 

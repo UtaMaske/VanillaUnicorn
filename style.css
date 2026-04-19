@@ -657,7 +657,7 @@ h1 {
 /* Subkategorien Grid Layout */
 .subkategorie-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(162px, 1fr));
     gap: 20px;
 }
 
@@ -678,6 +678,8 @@ h1 {
     border: 1px solid #f0f0f0;
 }
 
+
+
 /* Subkategorien (Shots, Cocktails, etc.) */
 #products h4 {
     color: #495057;
@@ -690,6 +692,23 @@ h1 {
 }
 
 .produkt-liste {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+}
+
+.subcategory-items-vertical {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* If the last subcategory is alone in its row, render it full-width like flat mode. */
+.subkategorie-grid.subcategory-stacked .subkategorie-block:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+}
+
+.subkategorie-grid.subcategory-stacked .subkategorie-block:last-child:nth-child(odd) .subcategory-items-vertical {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 12px;
